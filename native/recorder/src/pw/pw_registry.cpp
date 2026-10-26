@@ -118,10 +118,14 @@ bool ParseRoute(const spa_pod* param, uint32_t* direction, PwRoute* route) {
       case SPA_PARAM_ROUTE_info: {
         // Struct: Int n, then n (String key, String value) pairs.
         if (!spa_pod_is_struct(&prop->value)) break;
-        spa_pod* field;
+        // Explicit loop instead of SPA_POD_STRUCT_FOREACH: before PipeWire 1.2 the macro assigns
+        // the void* from SPA_POD_BODY/spa_pod_next to the iterator, which C++ rejects.
+        void* body = SPA_POD_BODY(&prop->value);
+        const uint32_t bodySize = SPA_POD_BODY_SIZE(&prop->value);
         const char* key = nullptr;
         bool first = true;
-        SPA_POD_STRUCT_FOREACH(&prop->value, field) {
+        for (auto* field = static_cast<spa_pod*>(body); spa_pod_is_inside(body, bodySize, field);
+             field = static_cast<spa_pod*>(spa_pod_next(field))) {
           if (first) {
             first = false;
             continue;
