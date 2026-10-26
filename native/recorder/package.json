@@ -20,7 +20,7 @@
     "deps": "node scripts/build-deps.mjs",
     "build": "node scripts/build-deps.mjs && cmake-js build --out build --config Release",
     "rebuild": "node scripts/build-deps.mjs && cmake-js rebuild --out build --config Release",
-    "test": "node --test --test-concurrency=1 test/"
+    "test": "node --test --test-concurrency=1 test/api-surface.mjs \"test/*.test.mjs\""
   },
   "devDependencies": {
     "cmake-js": "^8.0.0",

@@ -76,7 +76,10 @@ test('every Recorder call in the official JS exists on the addon', (t) => {
 test('class surface matches the official addon', () => {
   const proto = Object.getOwnPropertyNames(Recorder.prototype).filter((k) => k !== 'constructor');
   assert.deepEqual(proto, OFFICIAL_PROTOTYPE);
-  const statics = Object.getOwnPropertyNames(Recorder).filter((k) => !['length', 'name', 'prototype'].includes(k));
+  // Built-in own properties of a function object; V8 versions differ in whether a native class
+  // constructor carries the legacy 'arguments'/'caller' pair (Node 24 does, Node 26 does not).
+  const builtins = ['length', 'name', 'prototype', 'arguments', 'caller'];
+  const statics = Object.getOwnPropertyNames(Recorder).filter((k) => !builtins.includes(k));
   assert.deepEqual(statics, OFFICIAL_STATICS);
   for (const k of OFFICIAL_PROTOTYPE) assert.equal(Recorder.prototype[k].length, 0, k);
   for (const k of OFFICIAL_STATICS) assert.equal(Recorder[k].length, 0, k);
