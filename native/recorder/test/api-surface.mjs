@@ -4,15 +4,23 @@
 // Every Recorder call the official Plaud Desktop JavaScript makes must exist
 // on the Linux addon, and the class surface must match the official addon's
 // (property order and function lengths as read from recorder_mac.node).
-// PLAUD_RE_JS_DIR points at the extracted official app (out-global-online).
+// The official JS (out-global-online) is read from PLAUD_RE_JS_DIR (an
+// extracted app), else from the default reverse-engineering checkout, else
+// from the app.asar of the release pinned in official.json that
+// `npm run fetch-official` caches (or PLAUD_OFFICIAL_RESOURCES), as the
+// repository's own test suite finds it.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { loadAddon } from './support/pw.mjs';
+
+const require = createRequire(import.meta.url);
 
 const { Recorder } = loadAddon();
 
@@ -25,25 +33,53 @@ const OFFICIAL_STATICS = ['checkSystemAudioPermission', 'requestSystemAudioPermi
   'listSpeakerDevicesDetailed', 'computeAecLightMetrics', 'startSpeakerMuteMonitor', 'stopSpeakerMuteMonitor',
   'isSpeakerMuted'];
 
-const reRoot = process.env.PLAUD_RE_JS_DIR
-  ?? path.join(os.homedir(), 'Personal', 'Sources', '.plaud-re', 'mac', 'app', 'out-global-online');
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+const JS_DIR = 'out-global-online';
+const isJs = (name) => /\.(c|m)?js$/.test(name);
 
 function listJs(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...listJs(p));
-    else if (/\.(c|m)?js$/.test(entry.name)) out.push(p);
+    else if (isJs(entry.name)) out.push(p);
   }
   return out;
 }
 
-function officialCalls() {
+/**
+ * The official JS as [{ rel, src }] with where it came from, or { missing }
+ * naming every place that was looked at.
+ */
+function officialSources() {
+  const reRoot = process.env.PLAUD_RE_JS_DIR
+    ?? path.join(os.homedir(), 'Personal', 'Sources', '.plaud-re', 'mac', 'app', JS_DIR);
+  if (fs.existsSync(reRoot)) {
+    return { from: reRoot, files: listJs(reRoot).map((f) => ({ rel: path.relative(reRoot, f), src: fs.readFileSync(f, 'utf8') })) };
+  }
+  if (process.env.PLAUD_RE_JS_DIR) return { missing: `${reRoot} (PLAUD_RE_JS_DIR)` };
+  const { version } = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'official.json'), 'utf8'));
+  const resources = process.env.PLAUD_OFFICIAL_RESOURCES ?? path.join(REPO_ROOT, '.cache', 'official', version, 'Resources');
+  const asarPath = path.join(resources, 'app.asar');
+  if (!fs.existsSync(asarPath)) {
+    return { missing: `${reRoot} or ${asarPath} (set PLAUD_RE_JS_DIR, or run "npm run fetch-official")` };
+  }
+  const { AsarArchive } = require(path.join(REPO_ROOT, 'patcher', 'lib', 'asar.js'));
+  const archive = AsarArchive.open(asarPath);
+  try {
+    const files = archive.listFiles()
+      .filter((p) => p.startsWith(`${JS_DIR}/`) && isJs(p))
+      .map((p) => ({ rel: p.slice(JS_DIR.length + 1), src: archive.readFile(p).toString('utf8') }));
+    return { from: `${asarPath}:${JS_DIR}`, files };
+  } finally {
+    archive.close();
+  }
+}
+
+function officialCalls(files) {
   const statics = new Map();
   const instance = new Map();
-  for (const file of listJs(reRoot)) {
-    const src = fs.readFileSync(file, 'utf8');
-    const rel = path.relative(reRoot, file);
+  for (const { rel, src } of files) {
     for (const m of src.matchAll(/\bRecorder\.([A-Za-z_$][\w$]*)\s*\(/g)) {
       if (!statics.has(m[1])) statics.set(m[1], rel);
     }
@@ -55,13 +91,14 @@ function officialCalls() {
 }
 
 test('every Recorder call in the official JS exists on the addon', (t) => {
-  if (!fs.existsSync(reRoot)) {
-    t.skip(`official JS not found at ${reRoot} (set PLAUD_RE_JS_DIR)`);
+  const official = officialSources();
+  if (official.missing) {
+    t.skip(`official JS not found at ${official.missing}`);
     return;
   }
-  const { statics, instance } = officialCalls();
-  assert.ok(statics.size > 0, 'no Recorder.<static>( calls found: wrong PLAUD_RE_JS_DIR?');
-  assert.ok(instance.size > 0, 'no this.recorder.<method>( calls found: wrong PLAUD_RE_JS_DIR?');
+  const { statics, instance } = officialCalls(official.files);
+  assert.ok(statics.size > 0, `no Recorder.<static>( calls found in ${official.from}`);
+  assert.ok(instance.size > 0, `no this.recorder.<method>( calls found in ${official.from}`);
   for (const [name, file] of statics) {
     assert.equal(typeof Recorder[name], 'function', `static Recorder.${name} (called in ${file}) is missing`);
   }
@@ -69,6 +106,7 @@ test('every Recorder call in the official JS exists on the addon', (t) => {
     assert.equal(typeof Recorder.prototype[name], 'function',
       `Recorder.prototype.${name} (called in ${file}) is missing`);
   }
+  t.diagnostic(`official JS: ${official.files.length} files from ${official.from}`);
   t.diagnostic(`statics used by the app: ${[...statics.keys()].sort().join(', ')}`);
   t.diagnostic(`instance methods used by the app: ${[...instance.keys()].sort().join(', ')}`);
 });

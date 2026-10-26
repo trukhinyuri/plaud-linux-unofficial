@@ -49,6 +49,12 @@ const cleanups = [];
 export function onCleanup(fn) {
   cleanups.push(fn);
 }
+// A recorder, watcher or child process left running (a failed test that
+// never reached its stop()) keeps the test process alive, and node --test
+// then waits for that file forever. Once a file's tests are done, it gets
+// this long to exit before it fails, naming what is still open.
+const LINGER_MS = 30000;
+
 export function runCleanups() {
   while (cleanups.length > 0) {
     const fn = cleanups.pop();
@@ -58,11 +64,21 @@ export function runCleanups() {
       // Best effort: keep tearing down the rest.
     }
   }
+  setTimeout(() => {
+    console.error(`test process still alive ${LINGER_MS} ms after its tests ended; open handles: `
+      + `${process.getActiveResourcesInfo().join(', ')}`);
+    process.exit(1);
+  }, LINGER_MS).unref();
 }
 process.on('exit', runCleanups);
 
 // WirePlumber for tests: no hardware monitors, only the virtual devices the
-// tests create.
+// tests create. WirePlumber 0.5 reads the profiles from
+// wireplumber.conf.d/*.conf. WirePlumber 0.4 (Ubuntu 22.04/24.04, Debian 12)
+// ignores that section: its monitors are switched by Lua fragments that it
+// merges by file name across its config directories, so the switches are set
+// between the 50-*-config.lua defaults and 90-enable-all.lua. Monitors that an
+// older 0.4 release lacks are skipped.
 const WIREPLUMBER_TEST_CONF = `wireplumber.profiles = {
   main = {
     monitor.alsa = disabled
@@ -74,6 +90,11 @@ const WIREPLUMBER_TEST_CONF = `wireplumber.profiles = {
   }
 }
 `;
+const luaDisable = (...monitors) => monitors.map((m) => `if ${m} then ${m}.enabled = false end\n`).join('');
+const WIREPLUMBER_04_TEST_LUA = {
+  'main.lua.d': luaDisable('alsa_monitor', 'v4l2_monitor', 'libcamera_monitor'),
+  'bluetooth.lua.d': luaDisable('bluez_monitor', 'bluez_midi_monitor'),
+};
 
 /**
  * Starts a private PipeWire instance (pipewire, wireplumber, pipewire-pulse)
@@ -86,9 +107,13 @@ export async function startPrivatePipeWire() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plaud-rec-pw-'));
   const runtime = path.join(root, 'runtime');
   fs.mkdirSync(runtime, { mode: 0o700 });
-  const confDir = path.join(root, 'config', 'wireplumber', 'wireplumber.conf.d');
-  fs.mkdirSync(confDir, { recursive: true });
-  fs.writeFileSync(path.join(confDir, '90-plaud-recorder-tests.conf'), WIREPLUMBER_TEST_CONF);
+  const wpConfig = path.join(root, 'config', 'wireplumber');
+  fs.mkdirSync(path.join(wpConfig, 'wireplumber.conf.d'), { recursive: true });
+  fs.writeFileSync(path.join(wpConfig, 'wireplumber.conf.d', '90-plaud-recorder-tests.conf'), WIREPLUMBER_TEST_CONF);
+  for (const [dir, lua] of Object.entries(WIREPLUMBER_04_TEST_LUA)) {
+    fs.mkdirSync(path.join(wpConfig, dir));
+    fs.writeFileSync(path.join(wpConfig, dir, '51-plaud-recorder-tests.lua'), lua);
+  }
   Object.assign(process.env, {
     PIPEWIRE_RUNTIME_DIR: runtime,
     XDG_RUNTIME_DIR: runtime,
@@ -343,7 +368,11 @@ export function stopPlayback(child) {
   if (child.exitCode === null) child.kill('SIGTERM');
 }
 
-/** Runs a recording and collects every callback event. */
+/**
+ * Runs a recording and collects every callback event. The recorder is stopped
+ * even when an action throws: a running recorder's callback keeps the test
+ * process alive, so a failed test would otherwise hang the test run.
+ */
 export async function record(Recorder, options, { durationMs, actions = [] } = {}) {
   const recorder = new Recorder();
   const events = { log: [], audio: [], encoded: [], apm: [], fatal: [], other: [], order: [] };
@@ -355,15 +384,19 @@ export async function record(Recorder, options, { durationMs, actions = [] } = {
       : ev);
     events.order.push(ev.type);
   });
-  const pending = [...actions].sort((a, b) => a.at - b.at);
-  for (const action of pending) {
-    const wait = action.at - (Date.now() - started);
-    if (wait > 0) await sleep(wait);
-    await action.run(recorder, events);
+  let stopResult;
+  try {
+    const pending = [...actions].sort((a, b) => a.at - b.at);
+    for (const action of pending) {
+      const wait = action.at - (Date.now() - started);
+      if (wait > 0) await sleep(wait);
+      await action.run(recorder, events);
+    }
+    const remaining = durationMs - (Date.now() - started);
+    if (remaining > 0) await sleep(remaining);
+  } finally {
+    stopResult = recorder.stop();
   }
-  const remaining = durationMs - (Date.now() - started);
-  if (remaining > 0) await sleep(remaining);
-  const stopResult = recorder.stop();
   const ogg = Buffer.concat(events.encoded.map((e) => Buffer.from(e.data)));
   return { recorder, startResult, stopResult, events, ogg };
 }

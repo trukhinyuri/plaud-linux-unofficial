@@ -35,8 +35,10 @@ before(async () => {
 
 after(runCleanups);
 
-test('begin/pause/restart hammered while audio flows: one ring consumer, audio intact', { skip }, async () => {
+test('begin/pause/restart hammered while audio flows: one ring consumer, audio intact', { skip }, async (t) => {
   const r = new Recorder();
+  // A recorder left running (failed assertion) would keep this process alive.
+  t.after(() => r.stop());
   const events = { log: [], audio: [], encoded: [], fatal: [] };
   r.start({
     enableMicrophone: true, enableSystemAudio: true, encoding: true,

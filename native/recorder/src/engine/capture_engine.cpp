@@ -198,6 +198,8 @@ struct CaptureEngine::Side {
   std::atomic<uint64_t> discardSeq{0};
   DeviceSelection selection;
   std::string targetName;  // pinned node.name; empty = follow the default device
+  // Stream node handed to PwRegistry::PinTarget (loop thread).
+  uint32_t pinnedNode = SPA_ID_INVALID;
   // Worker-only bookkeeping.
   bool stallReported = false;
   uint64_t reportedOverflow = 0;
@@ -474,11 +476,17 @@ bool CaptureEngine::CreateStreamLocked(Side& side, const RegistrySnapshot& snap,
     pw_properties_set(props, "target.object", side.targetName.c_str());
     // Older session managers only know the numeric node.target.
     if (n != nullptr) pw_properties_setf(props, "node.target", "%u", n->id);
-    // An explicit selection stays on its device like the official recorder:
-    // without this, WirePlumber turns a stream linked to the current default
-    // into a default-follower (PulseAudio semantics) via stream metadata.
-    // Fallback to the default while the device is missing and the move back
-    // when it (re)appears still happen, since they follow target.object.
+    // An explicit selection stays on its device like the official recorder.
+    // WirePlumber turns a stream whose target.object property names the
+    // current default into a default-follower (PulseAudio semantics: its
+    // checkFollowDefault() writes target.node = -1 into the "default"
+    // metadata) when it links the stream to that default: at start, on
+    // fallback, or after the user made the device the default. 0.5 ignores
+    // the metadata of a node.dont-move stream. 0.4 has no node.dont-move, so
+    // PinStreamLocked() also puts the target into the metadata, where it
+    // outranks target.node and is never converted. Fallback to the default
+    // while the device is missing and the move back when it (re)appears
+    // still happen, since they follow the target.
     pw_properties_set(props, "node.dont-move", "true");
   }
   side.stream = pw_stream_new(conn_.core(), isSys ? "plaud-system-audio" : "plaud-microphone", props);
@@ -523,6 +531,21 @@ void CaptureEngine::DestroyStreamLocked(Side& side) {
   pw_stream_destroy(side.stream);
   side.stream = nullptr;
   side.nodeId = SPA_ID_INVALID;
+  side.pinnedNode = SPA_ID_INVALID;
+}
+
+// Pins each stream node of a selected device in the "default" metadata too,
+// once per node; the registry writes the entry as soon as the metadata and the
+// node are known to this client (§6.3 of docs/native-api/recorder.md). The
+// value is the node.name, as in the node's own target.object: WirePlumber's
+// stream-restore (0.4 restore-stream, 0.5 state-stream) only remembers
+// targets given as object serials, so a pinned recording never becomes the
+// remembered target of Plaud's streams. The entry goes away with the node.
+void CaptureEngine::PinStreamLocked(Side& side) {
+  const uint32_t node = side.nodeId.load();
+  if (side.targetName.empty() || node == SPA_ID_INVALID || node == side.pinnedNode) return;
+  registry_->PinTarget(node, side.targetName);
+  side.pinnedNode = node;
 }
 
 void CaptureEngine::OnStreamProcess(void* data) {
@@ -591,6 +614,8 @@ void CaptureEngine::OnGraphChangedLocked(uint32_t mask) {
 
 void CaptureEngine::EvaluateGraphLocked(bool force) {
   if (!graphReady_ || !registry_ || !mic_ || !sys_) return;
+  PinStreamLocked(*mic_);
+  PinStreamLocked(*sys_);
   const RegistrySnapshot snap = registry_->Snapshot();
 
   if (mic_->inPipeline) {

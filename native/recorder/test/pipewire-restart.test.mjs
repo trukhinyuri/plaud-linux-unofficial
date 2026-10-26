@@ -46,12 +46,14 @@ async function devices(micName, outName) {
   return { mic, out };
 }
 
-test('daemon crash mid-recording: one fatal device_invalidated, restart() recovers', { skip }, async () => {
+test('daemon crash mid-recording: one fatal device_invalidated, restart() recovers', { skip }, async (t) => {
   const micName = uniqueName('plaud_test_rs_mic');
   const outName = uniqueName('plaud_test_rs_out');
   await devices(micName, outName);
   await sleep(200);
   const r = new Recorder();
+  // A recorder left running (failed assertion) would keep this process alive.
+  t.after(() => r.stop());
   const { events, cb } = collector();
   r.start({
     enableMicrophone: true, enableSystemAudio: true, encoding: true,
@@ -88,12 +90,13 @@ test('daemon crash mid-recording: one fatal device_invalidated, restart() recove
   assert.ok(Number(info.format.duration) > 1.5, `duration ${info.format.duration}`);
 });
 
-test('restart() inside the fatal callback (the official flow) recovers and re-pins the devices', { skip }, async () => {
+test('restart() inside the fatal callback (the official flow) recovers and re-pins the devices', { skip }, async (t) => {
   const micName = uniqueName('plaud_test_rs_cb_mic');
   const outName = uniqueName('plaud_test_rs_cb_out');
   await devices(micName, outName);
   await sleep(200);
   const r = new Recorder();
+  t.after(() => r.stop());
   const events = { log: [], audio: [], encoded: [], fatal: [] };
   let restarted;
   r.start({
@@ -120,8 +123,9 @@ test('restart() inside the fatal callback (the official flow) recovers and re-pi
   assert.equal(r.stop(), true);
 });
 
-test('restart() without a daemon fails after its retry budget and stops the recorder', { skip }, async () => {
+test('restart() without a daemon fails after its retry budget and stops the recorder', { skip }, async (t) => {
   const r = new Recorder();
+  t.after(() => r.stop());
   const { events, cb } = collector();
   r.start({ enableMicrophone: false, enableSystemAudio: true, encoding: true }, cb);
   await sleep(500);

@@ -3,7 +3,8 @@
 //
 // Screen-capture statics of recorder_linux.node: argument validation parity
 // with the official addon, permission/OCR/window contracts, and live captures
-// (skipped when no capture backend is usable, e.g. headless CI).
+// (skipped when no capture backend is usable; CI runs them in an X11 session
+// on Xvfb with a window manager, see scripts/ci/x11-desktop.sh).
 //
 //   node --test test/screen.test.mjs
 //   RECORDER_ADDON=/path/to/addon.node node --test test/screen.test.mjs
@@ -518,10 +519,28 @@ test('getWindowAtCursor returns null or the official shape; windowId captures it
   assertThrows(() => withEnv({ PLAUD_SCREEN_COORDS: 'wayland' }, () => Recorder.captureScreenImage({ windowId: 0xfffffffe })), Error, 'Failed to capture screen image.');
 });
 
+// A forced backend is used as is or reported unusable, never replaced by
+// another one: where the session cannot offer it (grim needs a Wayland
+// compositor with a capture protocol, the portal a desktop portal with a
+// Screenshot backend; CI's X11 session has neither), the permission check is
+// denied with the reason and captures fail.
 for (const backend of ['grim', 'portal']) {
-  const usable = captureAvailable && withEnv({ PLAUD_SCREEN_BACKEND: backend }, () => Recorder.checkScreenCapturePermission()) === 0;
-  test(`forced ${backend} backend captures every display`, { skip: usable ? false : `${backend} backend unavailable` }, () => {
+  test(`forced ${backend} backend captures every display, or is reported unusable`, live, (t) => {
     const env = { PLAUD_SCREEN_COORDS: 'wayland', PLAUD_SCREEN_BACKEND: backend };
+    const check = collector();
+    const status = withEnv(env, () => Recorder.checkScreenCapturePermission(check.cb));
+    if (status !== 0) {
+      assert.equal(status, 1);
+      const warnings = check.logs.filter((l) => l.entry.level === 'warn').map((l) => l.entry.message);
+      assert.equal(warnings.length, 1, JSON.stringify(check.messages()));
+      assert.match(warnings[0], /^No usable screen capture backend \(.+\)\.$/);
+      t.diagnostic(`${backend}: ${warnings[0]}`);
+      const failed = collector();
+      withEnv(env, () => assertThrows(() => Recorder.captureScreenImage({ mode: 'main' }, failed.cb), Error,
+        'Failed to capture screen image.'));
+      assert.ok(failed.logs.some((l) => l.entry.level === 'error'), JSON.stringify(failed.messages()));
+      return;
+    }
     const { displays } = layout('wayland', backend);
     const runtime = process.env.XDG_RUNTIME_DIR;
     const listTemp = () => (runtime && fs.existsSync(path.join(runtime, 'hypr')) ? fs.readdirSync(path.join(runtime, 'hypr')).filter((n) => n.startsWith('xdph_screenshot')) : []);

@@ -102,6 +102,7 @@ class CaptureEngine {
   void TeardownPipeWire();
   bool CreateStreamLocked(Side& side, const RegistrySnapshot& snap, std::string* detail);
   void DestroyStreamLocked(Side& side);
+  void PinStreamLocked(Side& side);
   void OnGraphChangedLocked(uint32_t mask);
   void EvaluateGraphLocked(bool force);
   void OnCoreError(uint32_t id, int res, const std::string& message);

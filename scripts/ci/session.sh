@@ -16,8 +16,13 @@ SESSION_DIR=$(mktemp -d)
 chmod 700 "$SESSION_DIR"
 trap 'rm -rf "$SESSION_DIR"' EXIT
 
-mkdir -p "$SESSION_DIR/runtime" "$SESSION_DIR/config/wireplumber/wireplumber.conf.d" "$SESSION_DIR/state"
+mkdir -p "$SESSION_DIR/runtime" "$SESSION_DIR/config/wireplumber/wireplumber.conf.d" "$SESSION_DIR/state" \
+  "$SESSION_DIR/config/wireplumber/main.lua.d" "$SESSION_DIR/config/wireplumber/bluetooth.lua.d"
 chmod 700 "$SESSION_DIR/runtime"
+# WirePlumber 0.5 reads the monitor switches from the profile below;
+# WirePlumber 0.4 (Ubuntu 24.04, Debian 12) from Lua fragments, which it merges
+# by file name with its own *.lua.d files (51-* runs after the 50-*-config.lua
+# defaults and before 90-enable-all.lua).
 cat >"$SESSION_DIR/config/wireplumber/wireplumber.conf.d/90-ci-no-hardware.conf" <<'EOF'
 wireplumber.profiles = {
   main = {
@@ -29,6 +34,15 @@ wireplumber.profiles = {
     monitor.libcamera = disabled
   }
 }
+EOF
+cat >"$SESSION_DIR/config/wireplumber/main.lua.d/51-ci-no-hardware.lua" <<'EOF'
+if alsa_monitor then alsa_monitor.enabled = false end
+if v4l2_monitor then v4l2_monitor.enabled = false end
+if libcamera_monitor then libcamera_monitor.enabled = false end
+EOF
+cat >"$SESSION_DIR/config/wireplumber/bluetooth.lua.d/51-ci-no-hardware.lua" <<'EOF'
+if bluez_monitor then bluez_monitor.enabled = false end
+if bluez_midi_monitor then bluez_midi_monitor.enabled = false end
 EOF
 cat >"$SESSION_DIR/bus.conf" <<EOF
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"

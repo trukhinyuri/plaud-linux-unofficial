@@ -220,6 +220,13 @@ export async function waitForNodeGone(name, timeoutMs = 5000, where = () => true
 // they never see the machine's devices, never change its defaults and leave
 // nothing in the user's WirePlumber state. This process and every child
 // (pactl, pw-*, the monitor host) reach it through the environment.
+//
+// WirePlumber 0.5 reads the profiles from wireplumber.conf.d/*.conf.
+// WirePlumber 0.4 (Ubuntu 22.04/24.04, Debian 12) ignores that section: its
+// monitors are switched by Lua fragments that it merges by file name across
+// its config directories, so the switches are set between the 50-*-config.lua
+// defaults and 90-enable-all.lua. Monitors that an older 0.4 release lacks
+// are skipped.
 
 const WIREPLUMBER_TEST_CONF = `wireplumber.profiles = {
   main = {
@@ -232,6 +239,11 @@ const WIREPLUMBER_TEST_CONF = `wireplumber.profiles = {
   }
 }
 `;
+const luaDisable = (...monitors) => monitors.map((m) => `if ${m} then ${m}.enabled = false end\n`).join('');
+const WIREPLUMBER_04_TEST_LUA = {
+  'main.lua.d': luaDisable('alsa_monitor', 'v4l2_monitor', 'libcamera_monitor'),
+  'bluetooth.lua.d': luaDisable('bluez_monitor', 'bluez_midi_monitor'),
+};
 
 const AUDIO_TOOLS = ['pipewire', 'wireplumber', 'pipewire-pulse', 'pactl', 'pw-cli', 'pw-dump', 'pw-play', 'pw-record', 'pw-loopback', 'pw-link'];
 
@@ -261,9 +273,13 @@ export async function startPrivatePipeWire() {
   const root = tempDir('pw');
   const runtime = join(root, 'runtime');
   mkdirSync(runtime, { mode: 0o700 });
-  const confDir = join(root, 'config', 'wireplumber', 'wireplumber.conf.d');
-  mkdirSync(confDir, { recursive: true });
-  writeFileSync(join(confDir, '90-plaud-audio-monitor-tests.conf'), WIREPLUMBER_TEST_CONF);
+  const wpConfig = join(root, 'config', 'wireplumber');
+  mkdirSync(join(wpConfig, 'wireplumber.conf.d'), { recursive: true });
+  writeFileSync(join(wpConfig, 'wireplumber.conf.d', '90-plaud-audio-monitor-tests.conf'), WIREPLUMBER_TEST_CONF);
+  for (const [dir, lua] of Object.entries(WIREPLUMBER_04_TEST_LUA)) {
+    mkdirSync(join(wpConfig, dir));
+    writeFileSync(join(wpConfig, dir, '51-plaud-audio-monitor-tests.lua'), lua);
+  }
   Object.assign(process.env, {
     PIPEWIRE_RUNTIME_DIR: runtime,
     XDG_RUNTIME_DIR: runtime,

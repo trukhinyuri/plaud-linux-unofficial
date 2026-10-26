@@ -51,7 +51,7 @@ jobs:
             libpipewire-0.3-dev libopus-dev libogg-dev libdbus-1-dev libpng-dev zlib1g-dev libx11-dev libxrandr-dev \
             pipewire pipewire-bin pipewire-pulse pulseaudio-utils wireplumber dbus dbus-bin \
             ffmpeg squashfs-tools rpm appstream desktop-file-utils xdg-utils \
-            xvfb xauth libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libnotify4 libsecret-1-0
+            xvfb xauth openbox x11-apps x11-utils libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libnotify4 libsecret-1-0
 
       # Only third-party downloads are cached (@electron/get keeps Electron in
       # ~/.cache/electron); the official Plaud archive is fetched every run.
@@ -76,10 +76,14 @@ jobs:
         run: npm run build:native
 
       # The audio tests skip themselves when a tool they need (PipeWire,
-      # WirePlumber, pipewire-pulse, pactl, pw-*, ffmpeg) is missing; here a
-      # skipped test fails the job.
+      # WirePlumber, pipewire-pulse, pactl, pw-*, ffmpeg) is missing, the live
+      # screen-capture tests without a display; here a skipped test fails the
+      # job. They run in an X11 session on Xvfb with a window manager and a
+      # window under the pointer.
       - name: Native addon tests
-        run: scripts/ci/session.sh npm run test:native -- --fail-on-skip
+        run: >-
+          xvfb-run -a -s '-screen 0 1920x1080x24 -noreset'
+          scripts/ci/x11-desktop.sh scripts/ci/session.sh npm run test:native -- --fail-on-skip
 
       - name: Unit and integration tests
         run: scripts/ci/session.sh npm test

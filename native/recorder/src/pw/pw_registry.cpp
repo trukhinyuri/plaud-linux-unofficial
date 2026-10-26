@@ -234,6 +234,8 @@ void PwRegistry::Stop() {
   defaultSource_.clear();
   defaultSink_.clear();
   metadataId_ = 0xffffffffu;
+  otherNodes_.clear();
+  pendingPins_.clear();
 }
 
 void PwRegistry::DestroyBound(Bound* b) {
@@ -291,7 +293,11 @@ void PwRegistry::OnGlobal(void* data, uint32_t id, uint32_t permissions, const c
 
   if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     const std::string mediaClass = Str(DictGet(props, PW_KEY_MEDIA_CLASS));
-    if (!IsAudioSourceClass(mediaClass) && !IsAudioSinkClass(mediaClass)) return;
+    if (!IsAudioSourceClass(mediaClass) && !IsAudioSinkClass(mediaClass)) {
+      self->otherNodes_.insert(id);
+      self->WritePendingPin(id);
+      return;
+    }
     PwAudioNode node;
     node.id = id;
     ApplyNodeProps(node, props);
@@ -374,6 +380,10 @@ void PwRegistry::OnGlobal(void* data, uint32_t id, uint32_t permissions, const c
       b->proxyListenerAdded = true;
       self->metadataId_ = id;
       self->bound_[id] = std::move(b);
+      // Pins asked for before the session manager was up.
+      for (auto pin = self->pendingPins_.begin(); pin != self->pendingPins_.end();) {
+        self->WritePendingPin((pin++)->first);
+      }
     }
     return;
   }
@@ -394,6 +404,8 @@ void PwRegistry::OnGlobalRemove(void* data, uint32_t id) {
     }
   }
   if (id == self->metadataId_) self->metadataId_ = 0xffffffffu;
+  self->otherNodes_.erase(id);
+  self->pendingPins_.erase(id);
   auto it = self->bound_.find(id);
   if (it != self->bound_.end()) {
     self->DestroyBound(it->second.get());
@@ -524,6 +536,23 @@ RegistrySnapshot PwRegistry::Snapshot() const {
   snap.defaultSinkName = defaultSink_;
   snap.metadataPresent = metadataId_ != 0xffffffffu;
   return snap;
+}
+
+void PwRegistry::PinTarget(uint32_t subject, const std::string& target) {
+  pendingPins_[subject] = target;
+  WritePendingPin(subject);
+}
+
+void PwRegistry::WritePendingPin(uint32_t subject) {
+  const auto pin = pendingPins_.find(subject);
+  const auto metadata = bound_.find(metadataId_);
+  if (pin == pendingPins_.end() || metadata == bound_.end() || metadata->second->proxy == nullptr ||
+      otherNodes_.count(subject) == 0) {
+    return;
+  }
+  pw_metadata_set_property(reinterpret_cast<pw_metadata*>(metadata->second->proxy), subject, "target.object",
+                           "Spa:String", pin->second.c_str());
+  pendingPins_.erase(pin);
 }
 
 const PwAudioNode* RegistrySnapshot::ById(uint32_t id) const {

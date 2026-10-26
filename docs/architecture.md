@@ -390,8 +390,9 @@ checks every addon dependency against that list before packaging.
 CI (`.github/workflows/ci.yml`) runs all of the above on x86_64 and aarch64
 Ubuntu 24.04 inside a private PipeWire session with virtual devices
 (`scripts/ci/session.sh`), plus the native addon suites, which start their
-own PipeWire, WirePlumber and pipewire-pulse; a skipped native test fails
-the job (`npm run test:native -- --fail-on-skip`). It builds the AppImage,
+own PipeWire, WirePlumber and pipewire-pulse and run in an X11 session on
+Xvfb with a window manager (`scripts/ci/x11-desktop.sh`); a skipped native
+test fails the job (`npm run test:native -- --fail-on-skip`). It builds the AppImage,
 deb and rpm, installs the deb and starts it, starts the AppImage, and builds
 and installs the pacman package in an Arch Linux container. A daily run
 checks the newest official release against the patches.

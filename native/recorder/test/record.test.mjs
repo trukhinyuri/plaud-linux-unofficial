@@ -176,8 +176,10 @@ test('encoding off: PCM container and volume events only', { skip }, async () =>
   assert.ok(res.events.audio.length > 30);
 });
 
-test('start() on a running recorder and unknown devices', { skip }, async () => {
+test('start() on a running recorder and unknown devices', { skip }, async (t) => {
   const r = new Recorder();
+  // A recorder left running (failed assertion) would keep this process alive.
+  t.after(() => r.stop());
   const logs = [];
   const result = r.start({
     enableMicrophone: true, enableSystemAudio: false, encoding: true,

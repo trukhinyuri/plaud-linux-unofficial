@@ -422,11 +422,40 @@ stream links as soon as WirePlumber finds a device.
   - A sink uid never selects a microphone: the sides are checked.
 - **[D] Pinned selection.** A selected device gets `target.object = <uid>`,
   `node.target = <id>` (for older session managers) and
-  `node.dont-move = true`.
-  - Without `node.dont-move`, WirePlumber 0.5 turns a stream that is linked
-    to the current default into a default-follower (PulseAudio semantics,
-    its `checkFollowDefault` hook). A user who picked the device that is
-    currently the default would then be moved when the default changes.
+  `node.dont-move = true` on the stream node, and `target.object = <uid>`
+  for that node in the `default` metadata (the key a move in pavucontrol
+  sets through pipewire-pulse, there with the object serial).
+  - Without a pin, WirePlumber turns a stream that is linked to the current
+    default into a default-follower (PulseAudio semantics: its
+    `checkFollowDefault` writes `target.node = -1` for the stream to the
+    metadata). A user who picked the device that is currently the default
+    would then be moved when the default changes.
+  - WirePlumber 0.5 ignores the metadata of a stream with `node.dont-move`
+    and keeps the node properties (`scripts/linking/find-defined-target.lua`
+    lines 39 and 55 in 0.5.18).
+  - WirePlumber 0.4 (0.4.17 in Ubuntu 24.04) has no `node.dont-move`. It
+    reads a metadata `target.object` before the metadata `target.node` and
+    before the node properties, and a target taken from the metadata never
+    makes the stream a default-follower (`src/scripts/policy-node.lua`
+    `findDefinedTarget` lines 291-345, `checkFollowDefault` lines 626-652 in
+    0.4.17). Its other exemptions do not fit: `node.dont-reconnect` makes it
+    destroy the stream when the device goes away (line 791), and
+    `node.link-group` marks filter streams.
+  - The entry is written once per stream node, after this client's registry
+    has announced the node. PipeWire refuses an entry for a global the
+    client has not been told about yet: `metadata_set_property` gets
+    `ESTALE` from `pw_impl_client_check_permissions`
+    (`src/pipewire/impl-client.c:809` in 1.0.5), logged as `PipeWire error
+    (object 3, Stale file handle): set property error for id …`. The entry
+    goes away with the node.
+  - The value is the uid, not an object serial. WirePlumber's restore-stream
+    (0.4, `restore-stream.lua:161-176`) and state-stream (0.5,
+    `state-stream.lua:300-321`) look a metadata `target.object` up as an
+    object serial, so a pinned recording never becomes the remembered target
+    of Plaud's streams.
+  - `test/default-switch.test.mjs` "an explicitly selected output that is
+    the current default stays pinned too" fails on WirePlumber 0.4 without
+    the metadata entry.
   - The official recorder stays on its selected device [O: the mac
     `SetPreferredDevices` path only restarts on an explicit selection,
     mac strings 11444-11449].
@@ -1290,11 +1319,12 @@ strings, and the oracle confirms them [O].
   only exported symbols are the two N-API entry points and libstdc++
   template instantiations. A screen capture in a Wayland session needs
   `grim` or an xdg-desktop-portal with the Screenshot interface.
-- **`npm test`** (`node --test --test-concurrency=1 test/`):
+- **`npm test`** (`node --test --test-concurrency=1 --test-timeout=120000
+  test/api-surface.mjs "test/*.test.mjs"`):
 
   | File | What it checks |
   |---|---|
-  | `api-surface.mjs` | Every call in the official JS exists; class surface, order, `length`, exports |
+  | `api-surface.mjs` | Every call in the official JS exists; class surface, order, `length`, exports. The official JS comes from `PLAUD_RE_JS_DIR`, else the reverse-engineering checkout, else the `app.asar` that `npm run fetch-official` caches (`PLAUD_OFFICIAL_RESOURCES`) |
   | `validation.test.mjs` | Every error message, error class and return value against the oracle: idle methods, 39 `start()` cases, 40 `setAudioDevice()` cases, list shapes, permission logs, watcher and mute-monitor lifecycles |
   | `record.test.mjs` | 5 s mixed recording (Opus, 48 kHz, mono, duration; both test tones present, by tone power against an off-frequency bin); the Ogg page layout including EOS; PCM mode; already-running and unknown-device cases; background noise only |
   | `pause.test.mjs` | `pause`/`begin`/`fillSilence` timing in the encoded file; `pause(0)`/`(1)`; `setEncodingPaused`; `setApmEnabled`; `apm` event keys |
@@ -1311,7 +1341,8 @@ strings, and the oracle confirms them [O].
     pipewire-pulse instance (`test/support/pw.mjs`
     `startPrivatePipeWire()`) in a temporary runtime, config and state
     directory, under `setpriv --pdeathsig`. WirePlumber's ALSA, Bluetooth,
-    V4L2 and libcamera monitors are disabled.
+    V4L2 and libcamera monitors are disabled: by a `wireplumber.conf.d`
+    profile for 0.5 and by `main.lua.d`/`bluetooth.lua.d` fragments for 0.4.
   - Devices are null sinks and remapped sources made with `pactl`, and test
     tones are played with `pw-play` into those sinks only.
   - The tests therefore never open the machine's microphones or speakers,
@@ -1321,6 +1352,22 @@ strings, and the oracle confirms them [O].
     Without them, the PipeWire tests are skipped with the reason.
   - The screen tests need a graphical session and skip their live cases
     without one.
+- **[D] Hangs.** `--test-timeout` fails a test that runs for more than
+  120 s. A file whose tests have finished but whose process stays alive
+  (for example a recorder left running by a failed assertion; the tests stop
+  their recorders in `finally` or `t.after`) is ended by
+  `test/support/pw.mjs` 30 s after its cleanups: it prints the open handles
+  and exits with 1, and the run goes on with the next file.
+  `--test-force-exit` is not used: on Node 26 it ended `aec-metrics.test.mjs`
+  after 72-88 of its 117 tests with exit status 0.
+- **[D] CI.** The workflow runs the native suites with `--fail-on-skip` on
+  Ubuntu 24.04 (PipeWire 1.0.5, WirePlumber 0.4.17, Node 24), x64 and arm64,
+  inside `scripts/ci/session.sh` and an X11 session from
+  `scripts/ci/x11-desktop.sh`: Xvfb, openbox and one `xlogo` window, so the
+  live screen tests run the X11 path. Xvfb needs `-noreset`: without it, it
+  resets whenever its last client disconnects, and 2-5 % of a burst of
+  `XOpenDisplay` calls failed. The forced `grim` and portal backends are
+  unusable there, and the tests assert the reported reason instead.
 - **[O] In the patched app.** The Linux build of Plaud Desktop on an arm64
   Hyprland machine loaded the addon and recorded with it on 2026-10-26
   (`~/.config/Plaud/logs/log-2026-10-26.log`): the JS logged `Recorder
@@ -1331,10 +1378,15 @@ strings, and the oracle confirms them [O].
 
 ## 17. Open risks and unknowns
 
-- **[?] Older WirePlumber.** WirePlumber 0.4 (Ubuntu 22.04, Debian 12) may
-  ignore `node.dont-move` or `target.object` for pinned streams.
-  `node.target` is set as well, but the fallback and re-plug behaviour of
-  §6.3 is only verified with WirePlumber 0.5.18 and PipeWire 1.6.9.
+- **[D] WirePlumber 0.4.** Pinning, fallback and re-plug (§6.3) and the
+  whole suite pass with WirePlumber 0.4.17 and PipeWire 1.0.5 (Ubuntu
+  24.04, CI). Restarting WirePlumber alone while streams run (for example
+  `systemctl --user restart wireplumber`) leaves every running stream
+  unlinked there: the new instance waits for their session items, which
+  never activate (`policy-node.lua` `checkPending`: `pending 1 linkable not
+  ready`), so a recording goes on with silence and no `fatal` event until it
+  is restarted. WirePlumber 0.5.18 links them again. A restart of PipeWire
+  itself is handled (§10). Older 0.4 releases are untested.
 - **[D] Stop padding.** A recording that stops exactly on a page boundary
   gains 360 ms of silence (§8).
 - **[O] libm differences.** `computeAecLightMetrics` differs from macOS at
@@ -1344,9 +1396,10 @@ strings, and the oracle confirms them [O].
   set `PLAUD_SCREEN_COORDS`, so that Plaud's `physicalBounds` and the
   addon agree on the coordinate space. Switches added through
   `app.commandLine.appendSwitch` are invisible to the addon.
-- **[?] Untested environments.** The X11-session pixel path, sway, GNOME
-  and KDE are untested (no such sessions on the build machine). GNOME may
-  show a one-time screenshot permission dialog.
+- **[?] Untested environments.** The X11 pixel path runs only on Xvfb with
+  openbox (CI); X11 desktops, sway, GNOME and KDE are untested (no such
+  sessions on the build machine). GNOME may show a one-time screenshot
+  permission dialog.
 - **[D] Blocking restart.** `restart()` blocks the JS thread for up to 3 s
   while PipeWire is down.
 - **[?] Official per-page event granularity.** Whether the official addon

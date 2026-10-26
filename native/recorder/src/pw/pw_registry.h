@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -115,6 +116,14 @@ class PwRegistry {
 
   RegistrySnapshot Snapshot() const;
 
+  // Sets target.object = `target` for the stream node `subject` in the
+  // "default" metadata, as a user's move request does (§6.3 of
+  // docs/native-api/recorder.md). Written as soon as the session manager has
+  // created that metadata and the registry announced `subject`: the server
+  // refuses metadata naming a global this client was not told about yet
+  // (ESTALE). Dropped if the node goes away first. Loop lock held.
+  void PinTarget(uint32_t subject, const std::string& target);
+
  private:
   struct Bound;
   static void OnGlobal(void* data, uint32_t id, uint32_t permissions, const char* type, uint32_t version,
@@ -129,6 +138,7 @@ class PwRegistry {
 
   void Notify(uint32_t mask);
   void DestroyBound(Bound* bound);
+  void WritePendingPin(uint32_t subject);
 
   PwConnection* conn_;
   pw_registry* registry_ = nullptr;
@@ -136,6 +146,9 @@ class PwRegistry {
   ChangeFn onChange_;
   std::map<uint32_t, std::unique_ptr<Bound>> bound_;  // nodes, devices, metadata
   uint32_t metadataId_ = 0xffffffffu;
+  // Loop thread only.
+  std::set<uint32_t> otherNodes_;                // announced nodes that are not audio devices
+  std::map<uint32_t, std::string> pendingPins_;  // stream node -> target.object not written yet
 
   mutable std::mutex mu_;
   std::map<uint32_t, PwAudioNode> nodes_;
