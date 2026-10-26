@@ -1,0 +1,12 @@
+# AppArmor profile for Plaud Desktop for Linux (unofficial).
+# Ubuntu 23.10+ restricts unprivileged user namespaces for unconfined
+# programs; Chromium's sandbox needs them. The profile leaves the program
+# unconfined and only grants user namespace creation.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile @COMMAND@ /opt/@COMMAND@/@EXECUTABLE@ flags=(unconfined) {
+  userns,
+
+  include if exists <local/@COMMAND@>
+}

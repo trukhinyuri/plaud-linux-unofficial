@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+PROFILE_SRC=/usr/share/@PACKAGE_NAME@/apparmor-profile
+PROFILE=/etc/apparmor.d/@COMMAND@
+
+if [ "$1" = configure ]; then
+  # AppArmor 4 systems (Ubuntu 24.04 and later) restrict unprivileged user
+  # namespaces, which the Chromium sandbox uses; install a profile that
+  # allows them for this program only.
+  if [ -f /etc/apparmor.d/abi/4.0 ]; then
+    install -m 0644 "$PROFILE_SRC" "$PROFILE"
+    if [ -x /sbin/apparmor_parser ] && [ -d /sys/kernel/security/apparmor ]; then
+      apparmor_parser -r -T -W "$PROFILE" >/dev/null 2>&1 || true
+    fi
+  fi
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+  fi
+fi
+
+exit 0

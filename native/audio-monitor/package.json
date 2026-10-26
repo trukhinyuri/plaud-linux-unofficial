@@ -1,0 +1,24 @@
+{
+  "name": "@plaud-linux/audio-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Linux (PipeWire) implementation of the Plaud Desktop native AudioMonitor addon: meeting auto-detection, smart microphone and smart speaker selection (unofficial, not affiliated with PLAUD LLC)",
+  "license": "Apache-2.0",
+  "author": "Iurii Trukhin (also known as Yuri Trukhin)",
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux"
+  ],
+  "main": "build/Release/audio_monitor_linux.node",
+  "scripts": {
+    "build": "cmake-js build --out build --config Release",
+    "rebuild": "cmake-js rebuild --out build --config Release",
+    "test": "node --test --test-concurrency=1 test/api-surface.mjs test/selftest.test.mjs test/meeting-native.test.mjs test/meeting-browser.test.mjs test/mic-monitor.test.mjs test/speaker-monitor.test.mjs test/pipewire-restart.test.mjs"
+  },
+  "devDependencies": {
+    "cmake-js": "^8.0.0",
+    "node-addon-api": "^8.9.2"
+  }
+}

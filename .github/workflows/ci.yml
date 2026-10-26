@@ -1,0 +1,162 @@
+# Builds and tests Plaud Desktop for Linux (unofficial) against the official
+# Plaud release pinned in official.json, on x86_64 and aarch64.
+#
+# The builds contain official Plaud code downloaded during the job. Nothing
+# is uploaded: no artifacts, no releases, no caches of build outputs.
+# The daily run also checks whether the latest official release is supported
+# by the current patches, so upstream changes are noticed quickly.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build meson python3 pkg-config \
+            libpipewire-0.3-dev libopus-dev libogg-dev libdbus-1-dev libpng-dev zlib1g-dev libx11-dev libxrandr-dev \
+            pipewire pipewire-bin pipewire-pulse pulseaudio-utils wireplumber dbus dbus-bin \
+            ffmpeg squashfs-tools rpm appstream desktop-file-utils xdg-utils \
+            xvfb xauth libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libnotify4 libsecret-1-0
+
+      # Only third-party downloads are cached (@electron/get keeps Electron in
+      # ~/.cache/electron); the official Plaud archive is fetched every run.
+      - name: Cache downloads (Electron, native dependency sources)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            native/recorder/deps/cache
+          key: downloads-${{ matrix.arch }}-${{ hashFiles('scripts/electron-checksums.json', 'native/*/scripts/build-deps.mjs') }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Fetch and verify the official release
+        run: npm run fetch-official
+
+      - name: Check the patches against the pinned release
+        run: node patcher/cli.js check --resources ".cache/official/$(node -p 'require("./official.json").version')/Resources"
+
+      - name: Build the native addons
+        run: npm run build:native
+
+      # The audio tests skip themselves when a tool they need (PipeWire,
+      # WirePlumber, pipewire-pulse, pactl, pw-*, ffmpeg) is missing; here a
+      # skipped test fails the job.
+      - name: Native addon tests
+        run: scripts/ci/session.sh npm run test:native -- --fail-on-skip
+
+      - name: Unit and integration tests
+        run: scripts/ci/session.sh npm test
+
+      - name: Build the app
+        run: npm run build -- --skip-native-build
+
+      - name: Package (AppImage, deb, rpm)
+        run: npm run package -- --targets appimage,deb,rpm
+
+      - name: Validate packages
+        run: |
+          set -eux
+          desktop-file-validate build/linux-${{ matrix.arch }}/share/applications/*.desktop
+          appstreamcli validate --no-net build/linux-${{ matrix.arch }}/share/metainfo/*.xml
+          deb=$(ls dist/*.deb)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep -E 'opt/plaud-linux/(plaud-linux|chrome-sandbox|resources/(app.asar|recorder_linux.node|audio_monitor_linux.node|ffmpeg))$'
+          dpkg-deb --contents "$deb" | grep -E '^-rwsr-xr-x root/root .* ./opt/plaud-linux/chrome-sandbox$'
+          rpm=$(ls dist/*.rpm)
+          rpm -qip "$rpm"
+          rpm -qlvp "$rpm" | grep -E '^-rwsr-xr-x .* /opt/plaud-linux/chrome-sandbox$'
+          rpm -qp --requires "$rpm"
+          appimage=$(ls dist/*.AppImage)
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
+          test -x "$RUNNER_TEMP/squashfs-root/AppRun"
+          test -f "$RUNNER_TEMP/squashfs-root/usr/lib/plaud-linux/resources/app.asar"
+
+      - name: Install the deb and start it
+        run: |
+          set -eux
+          sudo apt-get install -y "./$(ls dist/*.deb)"
+          test -u /opt/plaud-linux/chrome-sandbox
+          mkdir -p ~/.config
+          echo --disable-gpu > ~/.config/plaud-linux-flags.conf
+          xvfb-run -a -s '-screen 0 1920x1080x24' scripts/ci/session.sh node scripts/smoke-test.js --launcher /usr/bin/plaud-linux --timeout 120
+
+      - name: Start the AppImage
+        run: |
+          set -eux
+          rm -rf ~/.config/Plaud
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          xvfb-run -a -s '-screen 0 1920x1080x24' scripts/ci/session.sh node scripts/smoke-test.js --launcher "$(ls "$PWD"/dist/*.AppImage)" --timeout 120
+
+      - name: Check the latest official release (scheduled runs)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -eu
+          resources=$(node scripts/fetch-official.js --latest)
+          node patcher/cli.js check --resources "$resources"
+
+  pacman:
+    name: pacman package (x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install system packages
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git nodejs npm cmake ninja meson python pkgconf \
+            libpipewire opus libogg dbus libpng zlib libx11 libxrandr pipewire wireplumber ffmpeg desktop-file-utils
+          useradd -m builder
+
+      - uses: actions/checkout@v4
+
+      - name: Build and package as an unprivileged user
+        run: |
+          chown -R builder: "$GITHUB_WORKSPACE"
+          su builder -c 'cd "$GITHUB_WORKSPACE" && npm ci && npm run fetch-official && npm run build && npm run package -- --targets pacman'
+
+      - name: Validate the package
+        run: |
+          set -eux
+          pkg=$(ls dist/*.pkg.tar.zst)
+          pacman -Qip "$pkg"
+          pacman -Qlp "$pkg" | grep -E '/opt/plaud-linux/resources/(app.asar|recorder_linux.node|audio_monitor_linux.node)$'
+          bsdtar -tvf "$pkg" | grep -E '^-rwsr-xr-x .* opt/plaud-linux/chrome-sandbox$'
+          pacman -U --noconfirm "$pkg"
+          test -x /usr/bin/plaud-linux

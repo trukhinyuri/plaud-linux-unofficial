@@ -1,0 +1,90 @@
+# Maintainer: Iurii Trukhin <yuri@trukhin.com>
+#
+# Source package for the AUR: everything is built on the user's machine.
+# The official Plaud archive is downloaded from Plaud's servers by makepkg
+# and checked against the SHA-512 Plaud publishes in its update feed; it is
+# never redistributed.
+
+pkgname=plaud-linux-unofficial
+pkgver=0.1.0
+pkgrel=1
+_plaudver=1.4.1
+_electronver=36.7.4
+pkgdesc="Unofficial Linux build of the Plaud Desktop app (AI meeting recorder)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/trukhinyuri/plaud-linux-unofficial"
+license=('Apache-2.0' 'LicenseRef-Plaud-proprietary')
+depends=(
+  'gtk3' 'nss' 'nspr' 'alsa-lib' 'mesa' 'libxkbcommon' 'libcups' 'at-spi2-core' 'dbus' 'pango' 'cairo'
+  'libx11' 'libxcb' 'libxcomposite' 'libxdamage' 'libxext' 'libxfixes' 'libxrandr' 'expat' 'systemd-libs'
+  'glib2' 'gcc-libs' 'libpipewire' 'opus' 'libogg' 'libpng' 'zlib' 'ffmpeg' 'xdg-utils' 'hicolor-icon-theme'
+)
+makedepends=('git' 'nodejs' 'npm' 'cmake' 'ninja' 'meson' 'python' 'pkgconf' 'libxrandr')
+optdepends=(
+  'libsecret: keep credentials in the Secret Service keyring'
+  'libnotify: desktop notifications'
+  'xdg-desktop-portal: global shortcuts and screenshots in Wayland sessions'
+  'grim: screenshots on wlroots-based compositors (Hyprland, Sway)'
+)
+options=('!strip' '!debug' '!lto')
+source=(
+  "git+${url}.git#tag=v${pkgver}"
+  "Plaud-${_plaudver}-arm64-mac.zip::https://client-download.plaud.ai/desktop/v2/Plaud-${_plaudver}-arm64-mac.zip"
+  "https://freedesktop.org/software/pulseaudio/webrtc-audio-processing/webrtc-audio-processing-2.1.tar.xz"
+  "https://github.com/abseil/abseil-cpp/releases/download/20240722.0/abseil-cpp-20240722.0.tar.gz"
+  "abseil-cpp_20240722.0-3_patch.zip::https://github.com/mesonbuild/wrapdb/releases/download/abseil-cpp_20240722.0-3/abseil-cpp_20240722.0-3_patch.zip"
+)
+source_x86_64=("https://github.com/electron/electron/releases/download/v${_electronver}/electron-v${_electronver}-linux-x64.zip")
+source_aarch64=("https://github.com/electron/electron/releases/download/v${_electronver}/electron-v${_electronver}-linux-arm64.zip")
+noextract=(
+  "Plaud-${_plaudver}-arm64-mac.zip"
+  "webrtc-audio-processing-2.1.tar.xz"
+  "abseil-cpp-20240722.0.tar.gz"
+  "abseil-cpp_20240722.0-3_patch.zip"
+  "electron-v${_electronver}-linux-x64.zip"
+  "electron-v${_electronver}-linux-arm64.zip"
+)
+sha512sums=(
+  'SKIP'
+  '23684f6675639a3a7931daca8d2730afef8584f81cdfc590e4b5225e8b814b6eae5efb868c8efb9b5a83eb6e2b5f64edaa7b0619e69807d1e7dda37dd2681c82'
+  'SKIP'
+  'SKIP'
+  'SKIP'
+)
+sha256sums=(
+  'SKIP'
+  'SKIP'
+  'ae9302824b2038d394f10213cab05312c564a038434269f11dbf68f511f9f9fe'
+  'f50e5ac311a81382da7fa75b97310e4b9006474f9560ac46f54a9967f07d4ae3'
+  '12dd8df1488a314c53e3751abd2750cf233b830651d168b6a9f15e7d0cf71f7b'
+)
+sha256sums_x86_64=('e8f33146916a8376603622d13d2322defe383678034eb8a60b44a13e42c61ce6')
+sha256sums_aarch64=('8a9a7a72924257f4432c57344dd428f957ed7ec7d0dd9c695292fd715a5a649c')
+
+_electron_arch() {
+  case "$CARCH" in
+    x86_64) echo x64 ;;
+    aarch64) echo arm64 ;;
+  esac
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  # Native dependency sources come from makepkg's verified downloads.
+  export PLAUD_DEPS_CACHE="$srcdir" PLAUD_DEPS_OFFLINE=1
+  npm ci
+  node scripts/build.js \
+    --official-zip "$srcdir/Plaud-${_plaudver}-arm64-mac.zip" \
+    --electron-zip "$srcdir/electron-v${_electronver}-linux-$(_electron_arch).zip"
+}
+
+check() {
+  cd "$srcdir/$pkgname"
+  PLAUD_OFFICIAL_RESOURCES="$srcdir/$pkgname/.cache/official/${_plaudver}/Resources" \
+    node --test test/patcher.test.js test/archive.test.js test/feed.test.js test/surface.test.js
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  node scripts/package.js --stage-root "$pkgdir"
+}

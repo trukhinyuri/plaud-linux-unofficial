@@ -1,0 +1,29 @@
+{
+  "name": "@plaud-linux/recorder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Linux (PipeWire) implementation of the Plaud Desktop native Recorder addon (unofficial, not affiliated with PLAUD LLC)",
+  "license": "Apache-2.0",
+  "author": "Iurii Trukhin (also known as Yuri Trukhin)",
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux"
+  ],
+  "binary": {
+    "napi_versions": [
+      8
+    ]
+  },
+  "scripts": {
+    "deps": "node scripts/build-deps.mjs",
+    "build": "node scripts/build-deps.mjs && cmake-js build --out build --config Release",
+    "rebuild": "node scripts/build-deps.mjs && cmake-js rebuild --out build --config Release",
+    "test": "node --test --test-concurrency=1 test/"
+  },
+  "devDependencies": {
+    "cmake-js": "^8.0.0",
+    "node-addon-api": "^8.9.2"
+  }
+}

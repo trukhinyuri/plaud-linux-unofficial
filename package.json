@@ -1,0 +1,37 @@
+{
+  "name": "plaud-linux-unofficial",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unofficial Linux build tooling for the Plaud Desktop app: native addons, a patcher and packaging scripts. Builds from the official download on the user's machine.",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Iurii Trukhin (also known as Yuri Trukhin)",
+    "email": "yuri@trukhin.com"
+  },
+  "homepage": "https://github.com/trukhinyuri/plaud-linux-unofficial",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trukhinyuri/plaud-linux-unofficial.git"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "scripts": {
+    "build:native": "node scripts/build-native.js",
+    "fetch-official": "node scripts/fetch-official.js",
+    "patch": "node patcher/cli.js",
+    "build": "node scripts/build.js",
+    "package": "node scripts/package.js",
+    "smoke": "node scripts/smoke-test.js",
+    "dev": "node scripts/dev-run.js",
+    "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
+    "test:native": "node scripts/build-native.js --test"
+  },
+  "devDependencies": {
+    "@electron/asar": "^4.3.1",
+    "@electron/get": "^5.1.0"
+  }
+}

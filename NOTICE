@@ -1,0 +1,27 @@
+Plaud Desktop for Linux (unofficial)
+Copyright 2026 Iurii Trukhin (also known as Yuri Trukhin)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This project is not affiliated with, endorsed by, or sponsored by PLAUD LLC.
+"Plaud" and the Plaud logo are trademarks of their respective owner and are
+used here only to identify the application this project makes available on
+Linux.
+
+The repository contains no Plaud code, assets or binaries. The build
+downloads the official Plaud Desktop release from Plaud's servers on the
+user's machine, verifies it against the checksum Plaud publishes, and
+modifies a copy for local use. Applications and packages produced by the
+build contain that proprietary Plaud code: they are for the use of the
+person who built them and must not be redistributed. Use of Plaud is
+subject to Plaud's terms of service.
+
+Builds also bundle Electron (MIT License, https://www.electronjs.org/),
+whose distribution includes Chromium and third-party components under
+their own licenses (LICENSE and LICENSES.chromium.html in the application
+directory). The native audio module statically links WebRTC Audio
+Processing (BSD-3-Clause, https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing)
+and Abseil (Apache-2.0, https://abseil.io/).
+
+Packages produced by the build use the system's ffmpeg at run time; no
+ffmpeg binaries are distributed.

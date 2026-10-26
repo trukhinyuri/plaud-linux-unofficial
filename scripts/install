@@ -1,0 +1,108 @@
+#!/bin/sh
+# Installs the app built by `npm run build` for the current user:
+#   ${XDG_DATA_HOME:-~/.local/share}/plaud-linux/app/   application
+#   ~/.local/bin/plaud-linux                            command
+#   ${XDG_DATA_HOME}/applications, icons, metainfo      desktop integration
+# and registers the plaud:// URL scheme (needed to sign in).
+#
+# Usage: scripts/install [--arch x64|arm64] [--from <build/linux-ARCH directory>]
+set -eu
+
+repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
+APP_ID=io.github.trukhinyuri.PlaudLinux
+COMMAND=plaud-linux
+PROTOCOL=plaud
+
+case "$(uname -m)" in
+  x86_64) arch=x64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) arch=$(uname -m) ;;
+esac
+src=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --arch) arch=${2:?--arch needs a value}; shift 2 ;;
+    --from) src=${2:?--from needs a directory}; shift 2 ;;
+    *) echo "install: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$src" ] || src="$repo/build/linux-$arch"
+if [ ! -x "$src/app/$COMMAND" ]; then
+  echo "install: $src/app/$COMMAND not found; run 'npm run build' first" >&2
+  exit 1
+fi
+
+data="${XDG_DATA_HOME:-$HOME/.local/share}"
+base="$data/$COMMAND"
+dest="$base/app"
+bindir="$HOME/.local/bin"
+
+if command -v pgrep >/dev/null 2>&1 && pgrep -f -- "$dest/plaud-linux-bin" >/dev/null 2>&1; then
+  echo "install: Plaud is running from $dest; quit it (tray menu > Quit) and run the installer again" >&2
+  exit 1
+fi
+
+# The data directory also receives the releases staged by the in-app updater,
+# which starts them only from directories no other user can write
+# (linux-runtime/secure-fs.js); keep it private, also when an older install
+# created it with a permissive umask.
+mkdir -p "$data"
+mkdir -p -m 700 "$base"
+chmod 700 "$base"
+
+# Replace the application directory; the previous one is renamed first so a
+# failed copy never leaves a half-installed app.
+tmp="$base/.app-new.$$"
+rm -rf "$tmp"
+cp -a "$src/app" "$tmp"
+if [ -d "$dest" ]; then
+  rm -rf "$base/.app-old"
+  mv "$dest" "$base/.app-old"
+fi
+mv "$tmp" "$dest"
+rm -rf "$base/.app-old"
+
+mkdir -p "$bindir"
+ln -sfn "$dest/$COMMAND" "$bindir/$COMMAND"
+
+# Desktop entry with an absolute Exec path (the Desktop Entry spec quoting
+# rules apply when the path contains special characters).
+exec_path=$dest/$COMMAND
+case "$exec_path" in
+  *[!A-Za-z0-9_./@+,:=-]*)
+    escaped=$(printf '%s' "$exec_path" | sed -e 's/%/%%/g' -e 's/[\\"`$]/\\\\&/g')
+    exec_value="\"$escaped\""
+    ;;
+  *)
+    exec_value=$exec_path
+    ;;
+esac
+mkdir -p "$data/applications"
+sed_value=$(printf '%s' "$exec_value" | sed -e 's/[\\|&]/\\&/g')
+sed -e "s|^Exec=.*|Exec=$sed_value %u|" "$src/share/applications/$APP_ID.desktop" > "$data/applications/$APP_ID.desktop.tmp"
+mv "$data/applications/$APP_ID.desktop.tmp" "$data/applications/$APP_ID.desktop"
+
+mkdir -p "$data/icons/hicolor" "$data/metainfo"
+cp -R "$src/share/icons/hicolor/." "$data/icons/hicolor/"
+cp "$src/share/metainfo/$APP_ID.metainfo.xml" "$data/metainfo/"
+
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data/applications" || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
+if command -v xdg-mime >/dev/null 2>&1; then
+  xdg-mime default "$APP_ID.desktop" "x-scheme-handler/$PROTOCOL"
+else
+  echo "install: xdg-mime not found; plaud:// links (sign-in) will not reach the app" >&2
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "install: warning: ffmpeg is not installed; recordings cannot be uploaded until it is" >&2
+elif ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus; then
+  echo "install: warning: ffmpeg lacks the libopus encoder; recordings cannot be uploaded" >&2
+fi
+
+case ":$PATH:" in
+  *":$bindir:"*) ;;
+  *) echo "install: note: $bindir is not on PATH; start Plaud from the application menu or $dest/$COMMAND" >&2 ;;
+esac
+
+echo "Installed Plaud (unofficial) to $dest"

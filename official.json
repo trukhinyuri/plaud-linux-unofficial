@@ -1,0 +1,8 @@
+{
+  "comment": "Official Plaud Desktop release this build is verified against. Values come from the official update feed (https://client-download.plaud.ai/desktop/v2/latest-mac.yml). Only the macOS arm64 zip is downloaded: it carries the platform-independent app.asar.",
+  "version": "1.4.1",
+  "feed": "https://client-download.plaud.ai/desktop/v2",
+  "file": "Plaud-1.4.1-arm64-mac.zip",
+  "sha512": "I2hPZnVjmjp5MdrKjScwr++FhPgc38WQ5LUiXouBS26uXvuGjI77m1qD624rX2TtqnsGGeaYB9Hn3aN90mgcgg==",
+  "size": 134112238
+}

@@ -1,0 +1,40 @@
+# RPM spec for Plaud Desktop for Linux (unofficial). Used by
+# scripts/package.js, which assembles the file tree beforehand and passes it
+# as the stagedroot macro, together with the generated file list (filelist).
+
+%global debug_package %{nil}
+%global _build_id_links none
+%global __os_install_post %{nil}
+%global __strip /bin/true
+# Libraries bundled with Electron are private to /opt/@COMMAND@.
+%global __provides_exclude_from ^/opt/@COMMAND@/.*$
+%global __requires_exclude ^(libffmpeg|libEGL|libGLESv2|libvk_swiftshader|libvulkan)\\.so.*$
+
+Name:           @PACKAGE_NAME@
+Version:        @RPM_VERSION@
+Release:        @RPM_RELEASE@
+Summary:        @SUMMARY@
+License:        Apache-2.0 AND LicenseRef-Plaud-proprietary
+URL:            @PROJECT_URL@
+Packager:       @MAINTAINER@
+ExclusiveArch:  @RPM_ARCH@
+Requires:       /usr/bin/ffmpeg
+Requires:       xdg-utils
+Recommends:     libsecret-1.so.0()(64bit)
+Recommends:     libnotify.so.4()(64bit)
+Recommends:     xdg-desktop-portal
+Recommends:     grim
+
+%description
+Runs the official Plaud Desktop application on Linux with native PipeWire
+audio capture, meeting detection, tray, autostart and updates.
+
+Unofficial build, not affiliated with or endorsed by PLAUD LLC. The package
+contains the official Plaud application code downloaded from Plaud; it must
+not be redistributed.
+
+%install
+mkdir -p %{buildroot}
+cp -a %{stagedroot}/. %{buildroot}/
+
+%files -f %{filelist}

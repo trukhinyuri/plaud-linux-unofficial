@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Iurii Trukhin (also known as Yuri Trukhin) -->
+<component type="desktop-application">
+  <id>@APP_ID@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary AND Apache-2.0</project_license>
+  <name>@DISPLAY_NAME@</name>
+  <summary>@SUMMARY@</summary>
+  <developer id="io.github.trukhinyuri">
+    <name>@MAINTAINER_NAME@</name>
+  </developer>
+  <update_contact>@MAINTAINER_EMAIL@</update_contact>
+  <description>
+    <p>
+      Runs the official Plaud Desktop application on Linux: meeting recording
+      from the microphone and system audio, automatic meeting detection,
+      highlights and screenshots during a recording, and upload to your Plaud
+      account for transcription and summaries.
+    </p>
+    <p>
+      This is an unofficial community build, not affiliated with or endorsed
+      by PLAUD LLC. It is assembled on your machine from the official release,
+      which is downloaded from Plaud and verified, plus open-source Linux
+      integration (native PipeWire audio modules, tray, autostart, updates).
+      Use of Plaud is subject to Plaud's terms of service.
+    </p>
+  </description>
+  <launchable type="desktop-id">@APP_ID@.desktop</launchable>
+  <url type="homepage">@PROJECT_URL@</url>
+  <url type="bugtracker">@PROJECT_URL@/issues</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+  <keywords>
+    <keyword>Plaud</keyword>
+    <keyword>meeting</keyword>
+    <keyword>recorder</keyword>
+    <keyword>transcription</keyword>
+  </keywords>
+  <provides>
+    <binary>@COMMAND@</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

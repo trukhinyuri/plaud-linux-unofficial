@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=@DISPLAY_NAME@
+GenericName=@GENERIC_NAME@
+Comment=@SUMMARY@
+Exec=@EXEC@ %u
+Icon=@APP_ID@
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=Plaud;recorder;meeting;transcription;summary;notes;
+MimeType=x-scheme-handler/@PROTOCOL@;
+StartupWMClass=@WM_CLASS@
+StartupNotify=true
+SingleMainWindow=true

@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build outputs. Everything below is produced on the user's machine from the
+# official Plaud download and must never be committed (see README, "Legal").
+/.cache/
+/build/
+/dist/
+/native/*/build/
+
+# Local tool caches and editor files
+*.log
+.DS_Store
+.idea/
+.vscode/
