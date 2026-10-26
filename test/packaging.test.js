@@ -164,8 +164,8 @@ test('the RPM file list marks chrome-sandbox setuid root', (t) => {
   assert.ok(!list.some((l) => l.includes('%dir "/usr')), 'shared system directories are not owned');
 });
 
-test('per-user install, upgrade and uninstall', (t) => {
-  const dir = tmpdir(t, 'plaud install ');
+/** A minimal `npm run build` output for scripts/install under `dir`. */
+function fakeBuild(dir) {
   const build = path.join(dir, 'build');
   writeExec(path.join(build, 'app', constants.COMMAND), '#!/bin/sh\necho launched\n');
   writeExec(path.join(build, 'app', constants.EXECUTABLE), '#!/bin/sh\n');
@@ -175,16 +175,29 @@ test('per-user install, upgrade and uninstall', (t) => {
   fs.writeFileSync(path.join(build, 'share', 'icons', 'hicolor', '64x64', 'apps', `${constants.APP_ID}.png`), 'png');
   fs.mkdirSync(path.join(build, 'share', 'metainfo'), { recursive: true });
   fs.writeFileSync(path.join(build, 'share', 'metainfo', `${constants.APP_ID}.metainfo.xml`), '<component/>');
+  return build;
+}
 
-  const home = path.join(dir, 'home');
-  const env = {
+/** The environment of a user whose home is `home` and data directory `dataHome`. */
+function userEnv(home, dataHome) {
+  return {
     PATH: process.env.PATH,
     HOME: home,
-    XDG_DATA_HOME: path.join(home, 'my data'),
+    XDG_DATA_HOME: dataHome,
     XDG_CONFIG_HOME: path.join(home, '.config'),
     XDG_STATE_HOME: path.join(home, '.local', 'state'),
     XDG_CACHE_HOME: path.join(home, '.cache'),
   };
+}
+
+const hasXdgMime = () => spawnSync('xdg-mime', ['--version']).status === 0;
+
+test('per-user install, upgrade and uninstall', (t) => {
+  // Spaces in every path: the desktop entry needs Exec quoting.
+  const dir = tmpdir(t, 'plaud install ');
+  const build = fakeBuild(dir);
+  const home = path.join(dir, 'home');
+  const env = userEnv(home, path.join(home, 'my data'));
   const run = (script, args = []) => spawnSync(path.join(REPO, 'scripts', script), args, { encoding: 'utf8', env });
   // A data directory left group-writable by an older install with umask 0002.
   const base = path.join(env.XDG_DATA_HOME, constants.DATA_DIR_NAME);
@@ -199,9 +212,15 @@ test('per-user install, upgrade and uninstall', (t) => {
   const desktop = fs.readFileSync(path.join(env.XDG_DATA_HOME, 'applications', `${constants.APP_ID}.desktop`), 'utf8');
   assert.ok(desktop.includes(`Exec="${path.join(appDir, constants.COMMAND)}" %u`), desktop);
   assert.ok(fs.existsSync(path.join(env.XDG_DATA_HOME, 'icons', 'hicolor', '64x64', 'apps', `${constants.APP_ID}.png`)));
-  if (spawnSync('xdg-mime', ['--version']).status === 0) {
-    const handler = spawnSync('xdg-mime', ['query', 'default', 'x-scheme-handler/plaud'], { encoding: 'utf8', env });
-    assert.equal(handler.stdout.trim(), `${constants.APP_ID}.desktop`);
+  // `xdg-mime query` of xdg-utils 1.1.3 (Ubuntu 22.04 and 24.04) finds no
+  // handler whose Exec is quoted or whose data directory has a space (it
+  // splits the paths at blanks), so the registration is checked in
+  // mimeapps.list here, and the query round trip by the plain-path test below.
+  if (hasXdgMime()) {
+    const mimeapps = fs.readFileSync(path.join(env.XDG_CONFIG_HOME, 'mimeapps.list'), 'utf8').split('\n');
+    const section = mimeapps.indexOf('[Default Applications]');
+    assert.ok(section >= 0, mimeapps.join('\n'));
+    assert.ok(mimeapps.slice(section + 1).includes(`x-scheme-handler/plaud=${constants.APP_ID}.desktop`), mimeapps.join('\n'));
   }
 
   fs.writeFileSync(path.join(build, 'app', 'new-file'), 'v2');
@@ -226,4 +245,20 @@ test('per-user install, upgrade and uninstall', (t) => {
   assert.ok(fs.existsSync(path.join(env.XDG_CONFIG_HOME, 'Plaud')), 'user data is kept without --purge');
   assert.equal(run('uninstall', ['--purge']).status, 0);
   assert.ok(!fs.existsSync(path.join(env.XDG_CONFIG_HOME, 'Plaud')));
+});
+
+test('install into a plain path: unquoted Exec, plaud:// resolves through xdg-mime', (t) => {
+  const dir = tmpdir(t, 'plaud-install-plain-');
+  const build = fakeBuild(dir);
+  const home = path.join(dir, 'home');
+  const env = userEnv(home, path.join(home, '.local', 'share'));
+  const res = spawnSync(path.join(REPO, 'scripts', 'install'), ['--from', build], { encoding: 'utf8', env });
+  assert.equal(res.status, 0, res.stderr);
+  const exe = path.join(env.XDG_DATA_HOME, constants.DATA_DIR_NAME, 'app', constants.COMMAND);
+  const desktop = fs.readFileSync(path.join(env.XDG_DATA_HOME, 'applications', `${constants.APP_ID}.desktop`), 'utf8');
+  assert.ok(desktop.split('\n').includes(`Exec=${exe} %u`), desktop);
+  if (hasXdgMime()) {
+    const handler = spawnSync('xdg-mime', ['query', 'default', 'x-scheme-handler/plaud'], { encoding: 'utf8', env });
+    assert.equal(handler.stdout.trim(), `${constants.APP_ID}.desktop`, handler.stderr);
+  }
 });

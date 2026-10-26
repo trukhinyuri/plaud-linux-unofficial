@@ -89,6 +89,9 @@ cp "$src/share/metainfo/$APP_ID.metainfo.xml" "$data/metainfo/"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$data/applications" || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
 if command -v xdg-mime >/dev/null 2>&1; then
+  # xdg-mime writes the handler to $XDG_CONFIG_HOME/mimeapps.list; xdg-utils
+  # 1.2 does not create that directory and still exits 0 without it.
+  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}"
   xdg-mime default "$APP_ID.desktop" "x-scheme-handler/$PROTOCOL"
 else
   echo "install: xdg-mime not found; plaud:// links (sign-in) will not reach the app" >&2
