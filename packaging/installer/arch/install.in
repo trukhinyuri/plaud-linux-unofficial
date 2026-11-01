@@ -1,0 +1,21 @@
+# Builds the app from the official Plaud release when the package is
+# installed or upgraded, and removes it with the package.
+
+_setup() {
+  if [ -z "${PLAUD_LINUX_SKIP_SETUP:-}" ]; then
+    /usr/bin/plaud-linux-setup --system ||
+      echo "@PACKAGE_NAME@: building the app failed; run \"sudo plaud-linux-setup\" to try again" >&2
+  fi
+}
+
+post_install() {
+  _setup
+}
+
+post_upgrade() {
+  _setup
+}
+
+pre_remove() {
+  /usr/bin/plaud-linux-setup --remove --system || true
+}

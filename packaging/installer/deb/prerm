@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# The app in /opt/@COMMAND@ was built by plaud-linux-setup, not unpacked by
+# dpkg; remove it with the package.
+if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
+  /usr/bin/plaud-linux-setup --remove --system || true
+fi
+
+exit 0

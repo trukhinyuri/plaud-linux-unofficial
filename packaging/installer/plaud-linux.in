@@ -1,0 +1,51 @@
+#!/bin/sh
+# plaud-linux: starts Plaud Desktop for Linux (unofficial) as built on this
+# machine by plaud-linux-setup.
+#
+# Uses the system-wide build in /opt/@COMMAND@ (made when the package was
+# installed). Without it, builds and starts a per-user copy in
+# ~/.local/share/@COMMAND@/app, and rebuilds that copy when the package
+# was upgraded.
+set -u
+
+SYSTEM_APP=/opt/@COMMAND@/@COMMAND@
+INSTALLER_VERSION=@VERSION@
+
+if [ -x "$SYSTEM_APP" ]; then
+  exec "$SYSTEM_APP" "$@"
+fi
+
+data=${XDG_DATA_HOME:-$HOME/.local/share}/@COMMAND@
+user_app=$data/app/@COMMAND@
+info=$data/app/resources/@COMMAND@/build-info.json
+
+notify() {
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send --app-name=Plaud -i @APP_ID@ "Plaud" "$1" 2>/dev/null || true
+  fi
+  echo "plaud-linux: $1" >&2
+}
+
+built=
+if [ -f "$info" ]; then
+  built=$(sed -n 's/^ *"version": "\([^"]*\)",*$/\1/p' "$info")
+fi
+running=false
+if command -v pgrep >/dev/null 2>&1 && pgrep -f -- "$data/app/@EXECUTABLE@" >/dev/null 2>&1; then
+  running=true
+fi
+
+if [ ! -x "$user_app" ] || { [ "$built" != "$INSTALLER_VERSION" ] && [ "$running" = false ]; }; then
+  state=${XDG_STATE_HOME:-$HOME/.local/state}/@COMMAND@
+  mkdir -p "$state"
+  log=$state/setup.log
+  notify "Preparing Plaud for this computer (downloading and verifying the official release); this takes a minute."
+  if /usr/bin/plaud-linux-setup --user >"$log" 2>&1; then
+    notify "Plaud is ready."
+  else
+    notify "Preparing Plaud failed; see $log"
+    [ -x "$user_app" ] || exit 1
+  fi
+fi
+
+exec "$user_app" "$@"

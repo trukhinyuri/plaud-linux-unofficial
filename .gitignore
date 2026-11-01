@@ -6,6 +6,7 @@ node_modules/
 /.cache/
 /build/
 /dist/
+/dist-installer/
 /native/*/build/
 
 # Local tool caches and editor files

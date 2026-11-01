@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+PROFILE_SRC=/usr/share/@PACKAGE_NAME@/apparmor-profile
+PROFILE=/etc/apparmor.d/@COMMAND@
+
+if [ "$1" = configure ]; then
+  # AppArmor 4 systems (Ubuntu 24.04 and later) restrict unprivileged user
+  # namespaces, which the Chromium sandbox uses; install a profile that
+  # allows them for the program plaud-linux-setup builds.
+  if [ -f /etc/apparmor.d/abi/4.0 ]; then
+    install -m 0644 "$PROFILE_SRC" "$PROFILE"
+    if [ -x /sbin/apparmor_parser ] && [ -d /sys/kernel/security/apparmor ]; then
+      apparmor_parser -r -T -W "$PROFILE" >/dev/null 2>&1 || true
+    fi
+  fi
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+  fi
+  # Download, verify and patch the official release. A failure (for
+  # example, no network) does not fail the installation: the app is then
+  # built per user on first start, or with "sudo plaud-linux-setup".
+  if [ -z "${PLAUD_LINUX_SKIP_SETUP:-}" ]; then
+    if ! /usr/bin/plaud-linux-setup --system; then
+      echo "@PACKAGE_NAME@: building the app failed; run \"sudo plaud-linux-setup\" to try again" >&2
+    fi
+  fi
+fi
+
+exit 0

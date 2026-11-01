@@ -9,6 +9,7 @@ url="@PROJECT_URL@"
 license=('Apache-2.0' 'LicenseRef-Plaud-proprietary')
 depends=(@DEPENDS@)
 optdepends=(@OPTDEPENDS@)
+conflicts=('@PACKAGE_NAME@-installer')
 options=(!strip !debug !emptydirs)
 
 package() {

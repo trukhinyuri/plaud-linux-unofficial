@@ -26,6 +26,7 @@ optdepends=(
   'xdg-desktop-portal: global shortcuts and screenshots in Wayland sessions'
   'grim: screenshots on wlroots-based compositors (Hyprland, Sway)'
 )
+conflicts=('plaud-linux-unofficial-installer')
 options=('!strip' '!debug' '!lto')
 source=(
   "git+${url}.git#tag=v${pkgver}"

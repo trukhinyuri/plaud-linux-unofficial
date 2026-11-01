@@ -20,6 +20,7 @@ Packager:       @MAINTAINER@
 ExclusiveArch:  @RPM_ARCH@
 Requires:       /usr/bin/ffmpeg
 Requires:       xdg-utils
+Conflicts:      @PACKAGE_NAME@-installer
 Recommends:     libsecret-1.so.0()(64bit)
 Recommends:     libnotify.so.4()(64bit)
 Recommends:     xdg-desktop-portal

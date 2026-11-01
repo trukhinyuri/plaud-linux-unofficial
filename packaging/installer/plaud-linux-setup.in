@@ -1,0 +1,150 @@
+#!/bin/sh
+# plaud-linux-setup: builds Plaud Desktop for Linux (unofficial) on this
+# machine from the official Plaud release and installs it.
+#
+# Usage:
+#   plaud-linux-setup [--system | --user] [--official-zip <zip>]
+#   plaud-linux-setup --remove [--system | --user]
+#   plaud-linux-setup --status
+#
+# Run as root it installs for all users to /opt/plaud-linux (this is what the
+# package does when it is installed or upgraded); run as a user it installs
+# to ~/.local/share/plaud-linux/app.
+#
+# The package contains no Plaud code. This command downloads stock Electron
+# @ELECTRON_VERSION@ from GitHub and the official Plaud release from Plaud's
+# update server, verifies both against the checksums pinned in the package
+# (SHA-256 for Electron, the SHA-512 Plaud publishes for its release), and
+# patches the release on this machine.
+set -eu
+
+LIBDIR=@LIBDIR@
+PREFIX=/opt/@COMMAND@
+SHARE_DIR=/usr/local/share
+ELECTRON_VERSION=@ELECTRON_VERSION@
+ELECTRON_SHA256_x64=@ELECTRON_SHA256_X64@
+ELECTRON_SHA256_arm64=@ELECTRON_SHA256_ARM64@
+
+die() {
+  echo "plaud-linux-setup: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+action=install
+mode=
+official_zip=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --system) mode=system ;;
+    --user) mode=user ;;
+    --remove) action=remove ;;
+    --status) action=status ;;
+    --official-zip) official_zip=${2:?--official-zip needs a file}; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+if [ -z "$mode" ]; then
+  if [ "$(id -u)" = 0 ]; then mode=system; else mode=user; fi
+fi
+if [ "$mode" = system ] && [ "$(id -u)" != 0 ]; then
+  die "--system needs root: sudo plaud-linux-setup --system"
+fi
+
+data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/@COMMAND@
+if [ "$mode" = system ]; then
+  work_dir=/var/cache/@PACKAGE_NAME@
+  app_dir=$PREFIX
+else
+  work_dir=${XDG_CACHE_HOME:-$HOME/.cache}/@COMMAND@/setup
+  app_dir=$data_dir/app
+fi
+
+status() {
+  info=$app_dir/resources/@COMMAND@/build-info.json
+  if [ -f "$info" ]; then
+    echo "$mode install: $app_dir"
+    sed -n 's/^ *"\(version\|upstreamVersion\|electron\|arch\)": "\([^"]*\)",*$/  \1: \2/p' "$info"
+  else
+    echo "$mode install: not built ($app_dir)"
+  fi
+}
+
+remove() {
+  if [ "$mode" = system ]; then
+    list=$PREFIX/resources/@COMMAND@/installed-files
+    if [ -f "$list" ]; then
+      while IFS= read -r file; do
+        case "$file" in
+          "$SHARE_DIR"/*) rm -f -- "$file" ;;
+        esac
+      done < "$list"
+    fi
+    rm -rf -- "$PREFIX" "$work_dir"
+  else
+    sh "$LIBDIR/scripts/uninstall"
+    rm -rf -- "$work_dir"
+  fi
+}
+
+case "$action" in
+  status) status; exit 0 ;;
+  remove) remove; exit 0 ;;
+esac
+
+case "$(uname -m)" in
+  x86_64) arch=x64; electron_sha256=$ELECTRON_SHA256_x64 ;;
+  aarch64 | arm64) arch=arm64; electron_sha256=$ELECTRON_SHA256_arm64 ;;
+  *) die "unsupported architecture $(uname -m) (x86_64 and aarch64 are supported)" ;;
+esac
+
+umask 077
+mkdir -p "$work_dir"
+chmod 700 "$work_dir"
+
+electron_zip=$work_dir/electron-v$ELECTRON_VERSION-linux-$arch.zip
+electron_url=https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/electron-v$ELECTRON_VERSION-linux-$arch.zip
+
+verified() {
+  [ -f "$electron_zip" ] && printf '%s  %s\n' "$electron_sha256" "$electron_zip" | sha256sum -c --status
+}
+
+download() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 --proto '=https' --tlsv1.2 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --https-only -O "$2" "$1"
+  else
+    die "curl or wget is needed to download Electron"
+  fi
+}
+
+if ! verified; then
+  echo "plaud-linux-setup: downloading $electron_url" >&2
+  rm -f "$electron_zip.part"
+  download "$electron_url" "$electron_zip.part" || die "download of Electron failed"
+  mv "$electron_zip.part" "$electron_zip"
+  verified || {
+    rm -f "$electron_zip"
+    die "Electron download does not match the pinned SHA-256 $electron_sha256"
+  }
+fi
+
+runtime=$(mktemp -d "$work_dir/electron.XXXXXX")
+trap 'rm -rf "$runtime"' EXIT INT TERM
+unzip -q "$electron_zip" -d "$runtime"
+
+umask 022
+set -- install --mode "$mode" --work-dir "$work_dir" --electron-zip "$electron_zip"
+if [ "$mode" = system ]; then
+  set -- "$@" --prefix "$PREFIX" --share-dir "$SHARE_DIR"
+fi
+if [ -n "$official_zip" ]; then
+  set -- "$@" --official-zip "$official_zip"
+fi
+ELECTRON_RUN_AS_NODE=1 ELECTRON_NO_ASAR=1 "$runtime/electron" "$LIBDIR/scripts/setup.js" "$@"

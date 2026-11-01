@@ -1,0 +1,58 @@
+# RPM spec for the installer package of Plaud Desktop for Linux (unofficial).
+# Used by scripts/package-installer.js, which assembles the file tree
+# beforehand and passes it as the stagedroot macro with the file list.
+# The package contains only this project's code; %post builds the app.
+
+%global debug_package %{nil}
+%global _build_id_links none
+%global __os_install_post %{nil}
+%global __strip /bin/true
+
+Name:           @PACKAGE_NAME@
+Version:        @RPM_VERSION@
+Release:        @RPM_RELEASE@
+Summary:        @SUMMARY@ (installer)
+License:        Apache-2.0
+URL:            @PROJECT_URL@
+Packager:       @MAINTAINER@
+ExclusiveArch:  @RPM_ARCH@
+Conflicts:      @CONFLICTS@
+Requires:       ca-certificates
+Requires:       (curl or wget)
+Requires:       unzip
+Requires:       /usr/bin/ffmpeg
+Requires:       xdg-utils
+@RPM_REQUIRES@
+Recommends:     libsecret-1.so.0()(64bit)
+Recommends:     libnotify.so.4()(64bit)
+Recommends:     xdg-desktop-portal
+Recommends:     grim
+
+%description
+Installs the official Plaud Desktop application on Linux with native
+PipeWire audio capture, meeting detection, tray, autostart and updates.
+
+This package contains no Plaud code. When it is installed, it downloads the
+official Plaud release from Plaud's servers and stock Electron from GitHub,
+verifies both against pinned checksums and builds the app in
+/opt/@COMMAND@ (plaud-linux-setup).
+
+Unofficial, not affiliated with or endorsed by PLAUD LLC.
+
+%install
+mkdir -p %{buildroot}
+cp -a %{stagedroot}/. %{buildroot}/
+
+%post
+if [ -z "${PLAUD_LINUX_SKIP_SETUP:-}" ]; then
+  /usr/bin/plaud-linux-setup --system || echo "@PACKAGE_NAME@: building the app failed; run \"sudo plaud-linux-setup\" to try again" >&2
+fi
+exit 0
+
+%preun
+if [ "$1" -eq 0 ]; then
+  /usr/bin/plaud-linux-setup --remove --system || :
+fi
+exit 0
+
+%files -f %{filelist}
