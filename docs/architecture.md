@@ -374,6 +374,65 @@ xdg-utils; the addons link libpipewire, libopus, libogg, libdbus, libpng and
 zlib dynamically and load libX11/libXrandr at run time. `npm run package`
 checks every addon dependency against that list before packaging.
 
+### Installer packages (published releases)
+
+The packages above contain Plaud's code and are only for the machine that
+built them. Releases publish *installer packages* instead
+(`scripts/package-installer.js`, package `plaud-linux-unofficial-installer`
+for deb, rpm and pacman), which contain only this project's files:
+
+| Path | Content |
+|---|---|
+| `/usr/lib/plaud-linux-unofficial-installer/` | `patcher/`, `linux-runtime/`, the build scripts (`scripts/setup.js`, `build.js`, `fetch-official.js`, ...), packaging templates, `official.json`, and the two compiled addons |
+| `/usr/bin/plaud-linux-setup` | Builds and installs the app (below) |
+| `/usr/bin/plaud-linux` | Starts `/opt/plaud-linux/plaud-linux`; without it, builds a per-user copy on first start (and after a package upgrade) and starts that |
+| `/usr/share/applications/io.github.trukhinyuri.PlaudLinux.desktop` | Desktop entry (`Exec=plaud-linux %u`, `plaud://` handler) |
+
+An allowlist of path patterns (`ALLOWED` in `scripts/package-installer.js`)
+is checked on the staged tree and, with `--verify`, on the finished package
+files; the release workflow verifies every artifact before it uploads it.
+Any `.asar`, `.icns`, `.ico`, `.png`, `.zip` or foreign `.node` file fails
+the check.
+
+`plaud-linux-setup` runs from the package's install script as root (deb
+`postinst`, rpm `%post`, pacman `post_install`/`post_upgrade`;
+`PLAUD_LINUX_SKIP_SETUP=1` skips it) or per user:
+
+1. downloads stock Electron 36.7.4 for the machine's architecture from
+   GitHub and checks its SHA-256 against `scripts/electron-checksums.json`
+   (rendered into the script); a mismatching file is deleted and the setup
+   fails;
+2. unpacks it to a temporary directory and runs `scripts/setup.js` with it
+   as the Node.js runtime (`ELECTRON_RUN_AS_NODE=1`, `ELECTRON_NO_ASAR=1`):
+   Ubuntu 22.04/24.04 and RHEL 9 ship Node.js older than the 22.12 the
+   scripts need, while Electron 36.7.4 contains Node.js 22.17.1;
+3. `scripts/setup.js` runs the normal build (`scripts/build.js` with
+   `--skip-native-build`): the official release named in `official.json`
+   with its SHA-512 check, the patches, the packaged addons, the verified
+   Electron zip;
+4. installs the result: as root into `/opt/plaud-linux` (built next to it
+   and renamed into place, `chrome-sandbox` setuid root, icons and AppStream
+   metadata rendered from the official icon into `/usr/local/share`, listed
+   in `resources/plaud-linux/installed-files`), per user with
+   `scripts/install`;
+5. deletes the build directory; only the verified downloads stay in the
+   private cache (`/var/cache/plaud-linux-unofficial-installer` or
+   `~/.cache/plaud-linux/setup`, mode 0700).
+
+Removing the package runs `plaud-linux-setup --remove --system` (deb
+`prerm`, rpm `%preun`, pacman `pre_remove`), which deletes `/opt/plaud-linux`,
+the files it listed and the cache. The installer and the full packages
+declare conflicts with each other because both provide `/usr/bin/plaud-linux`
+and `/opt/plaud-linux`.
+
+Each installer package is built in a container of the oldest distribution
+it targets (`scripts/ci/installer-build.sh`): Ubuntu 22.04 (PipeWire 0.3.48,
+glibc 2.35) for the deb, Rocky Linux 9 (glibc 2.34) for the rpm, Arch Linux
+and Arch Linux ARM for pacman. Arch Linux ARM has no official container
+image; `scripts/ci/alarm-image.sh` imports the generic aarch64 root file
+system after checking its signature by the Arch Linux ARM Build System key
+(`68B3537F39A313B3E574D06777193F152BDBE6A6`).
+
 ## Testing
 
 | Suite | Covers |
@@ -385,6 +444,7 @@ checks every addon dependency against that list before packaging.
 | `test/dbus.test.js` | D-Bus marshalling and a live session bus |
 | `test/packaging.test.js` | Launcher, ffmpeg wrapper, desktop entry and AppStream validation, package versions, skipped-test detection for the native suites, per-user install/upgrade/uninstall |
 | `test/integration/updater.test.js` | Update flow in headless Electron, including the private-directory checks |
+| `test/installer.test.js` | Installer tree against the allowlist (and tampered trees refused), rendered scripts, the Electron checksum-mismatch path of `plaud-linux-setup`, `--status`/`--remove`, the per-user launcher path |
 | `scripts/smoke-test.js` | Starts a built app and waits until both addons are loaded, then quits it through the inspector |
 
 CI (`.github/workflows/ci.yml`) runs all of the above on x86_64 and aarch64
@@ -395,4 +455,20 @@ Xvfb with a window manager (`scripts/ci/x11-desktop.sh`); a skipped native
 test fails the job (`npm run test:native -- --fail-on-skip`). It builds the AppImage,
 deb and rpm, installs the deb and starts it, starts the AppImage, and builds
 and installs the pacman package in an Arch Linux container. A daily run
-checks the newest official release against the patches.
+checks the newest official release against the patches, and, for
+information, the release candidate channel (`fetch-official.js --channel rc`).
+
+`lint` runs actionlint, shellcheck and a syntax check of every JavaScript
+file. `installer.yml` (also called by the release workflow) builds the six
+installer packages (deb, rpm, pacman for x86_64 and aarch64, on GitHub's
+`ubuntu-24.04` and `ubuntu-24.04-arm` runners), installs each in fresh
+containers (Ubuntu 22.04 and 24.04, Debian 12, Rocky Linux 9, AlmaLinux 9,
+Fedora, Arch Linux / Arch Linux ARM; `scripts/ci/installer-smoke.sh`),
+checks the built app and its removal, and starts the app installed from the
+deb on the runner itself.
+
+`release.yml` runs for a tag `v<package.json version>`: it builds and tests
+the installer packages, verifies their contents against the allowlist,
+writes `SHA256SUMS`, attests build provenance
+(`actions/attest-build-provenance`) and creates the GitHub release with
+those seven files only.

@@ -216,7 +216,9 @@ verified against, and no unknown addon may ship. A failure is reported as
 ## Updating for a new official release
 
 1. `node scripts/fetch-official.js --latest` downloads and verifies the
-   latest release into `.cache/official/<version>/`.
+   latest release into `.cache/official/<version>/`
+   (`--channel rc|beta|alpha` reads a pre-release channel instead; CI checks
+   `rc` daily for information).
 2. `node patcher/cli.js check --resources .cache/official/<version>/Resources`
    reports each patch as applied or the exact failure.
 3. For a failed anchor, read the new code, adjust `anchor`/`replacement`,
@@ -229,3 +231,35 @@ verified against, and no unknown addon may ship. A failure is reported as
 Installed apps do this check themselves for every release the official feed
 offers; a release that needs a code change here is refused until a new
 build of this project is installed.
+
+## Next major release: 4.0.0-rc.2 (not supported yet)
+
+The stable channel offers 1.4.1 [O: `https://client-download.plaud.ai/desktop/v2/latest-mac.yml`,
+`latest.yml`, fetched 2026-11-01 16:59 UTC]. The release candidate channel
+offers 4.0.0-rc.2 [O: `.../desktop/rc/rc-mac.yml`, `rc.yml`, last modified
+2026-10-15]; only installations already running an `-rc` version read that
+channel [O 1.4.1 `misc-DYpkuuKJ.js:270-281`], so stable users are not
+offered it. `node patcher/cli.js check` fails on it with the first patch,
+and every patch fails the same way: the bundle was rebuilt.
+
+Findings from the 4.0.0-rc.2 arm64 zip (SHA-512 verified against the feed;
+paths inside `app.asar`) [O]:
+
+| Topic | 1.4.1 | 4.0.0-rc.2 | Needed here |
+|---|---|---|---|
+| Electron | 36.7.4 | 36.7.4 (`Electron Framework` `CFBundleVersion`) | nothing |
+| `main` | `out-global-online/main/index.js` | `out/main/index.js`, code in `out/main/chunks/` (164 files) and a worker `out/main/dbWorker.js` | patch file patterns, `readSurfaceInputs` and the API-surface prefix in `patcher/` |
+| Native addons | `recorder_mac.node`, `audio_monitor_mac.node` | the same two, plus `better_sqlite3.node` from `better-sqlite3-multiple-ciphers` 12.10.0 (encrypted local database, `dbWorker.js:273-291`) | a Linux `better_sqlite3.node` built from that package for Electron 36; it is loaded from `process.resourcesPath` under its macOS name on Linux (`chunks/resourcePath-vScxK-8Q.js`), so no patch; the API-surface check must skip its SQLite strings |
+| Recorder API used | 8 statics, 8 methods | the same minus `listSpeakerDevicesDetailed` | nothing |
+| `native-platform-dir`, `recorder-addon-name` | `nativeRecorder-*.js` | `chunks/recordingService-CUbXnSSC.js:51-54`, `:87` | new anchors |
+| `audio-monitor-addon-name` | `createOrFocusWindow-*.js` | `chunks/createWindowBase-Bwg0MqJ7.js:1209` | new anchor |
+| `tray-icon-path`, `tray-context-menu`, `tray-bounds` | `index-C7esC3cC.js` | `chunks/index-BNKzXgZk.js:25-40`, `:335`, `:128` | new anchors |
+| `autostart-*`, `analytics-os` | `compatible-OR3mc4zn.js` | `chunks/buildEnv-DrXi9Ooj.js:3654-3713`, `:3275` | new anchors |
+| `updater` | `misc-DYpkuuKJ.js` | `chunks/createWindowBase-Bwg0MqJ7.js:15`, `574`, `661-758` (same electron-updater calls) | new anchor |
+| `global-shortcuts` | `shortcutService-BSPv4w4s.js` | `chunks/createWindowBase-Bwg0MqJ7.js:3597` | new anchor |
+| `recording-highlight-floating` | `index-CMiydsIK.js` | `chunks/index-CZcU-Eik.js:134` | new anchor |
+| New platform code | | `chunks/micMonitorService-C5mmTXAx.js` (smart microphone through the existing `startMicMonitor`), `chunks/createAttachedPopup-Cki-5SUt.js` (macOS `panel` popups) | none found beyond the above |
+
+The port is planned for when 4.0.0 reaches the stable channel; until then an
+installed app keeps 1.4.1 and the updater refuses 4.0.0 once, with a
+notification.
