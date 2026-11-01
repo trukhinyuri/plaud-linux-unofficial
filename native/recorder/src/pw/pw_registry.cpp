@@ -7,7 +7,11 @@
 #include <spa/param/audio/raw.h>
 #include <spa/param/param.h>
 #include <spa/param/props.h>
+// PipeWire < 0.3.6x declares the route parameters in spa/param/param.h
+// (Ubuntu 22.04 ships 0.3.48); later versions moved them to route.h.
+#if __has_include(<spa/param/route.h>)
 #include <spa/param/route.h>
+#endif
 #include <spa/pod/iter.h>
 #include <spa/utils/defs.h>
 #include <spa/utils/dict.h>

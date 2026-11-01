@@ -117,8 +117,15 @@ for (const c of CASES) {
   });
 }
 
+// The oracle recorded lpbFloat16 with a real Float16Array, which Electron 36
+// has (V8 13.6) and Node.js has from version 24; Node 22 has none, and its
+// stand-in in vectors.mjs is a different input.
+const PROBE_SKIP = {
+  lpbFloat16: typeof Float16Array === 'function' ? false : 'Float16Array is missing in this runtime (Node.js < 24)',
+};
+
 for (const [id, build] of Object.entries(PROBES)) {
-  test(`argument probe ${id}`, () => {
+  test(`argument probe ${id}`, { skip: PROBE_SKIP[id] ?? false }, () => {
     const want = expected.probes[id];
     assert.ok(want, `fixture has probe ${id}`);
     assertOutcome(runCall(call, build()), want, id);
