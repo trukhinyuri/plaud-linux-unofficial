@@ -2,10 +2,11 @@
 'use strict';
 
 // Downloads the official Plaud Desktop macOS zip, verifies its SHA-512 against
-// official.json (or, with --latest, against the live update feed) and extracts
-// the parts the patcher needs into .cache/official/<version>/Resources.
+// official.json (or, with --latest or --channel, against the live update feed)
+// and extracts the parts the patcher needs into
+// .cache/official/<version>/Resources.
 //
-//   node scripts/fetch-official.js [--latest] [--zip <local copy>]
+//   node scripts/fetch-official.js [--latest | --channel latest|rc|beta|alpha] [--zip <local copy>]
 //
 // Prints the Resources directory on stdout.
 
@@ -15,16 +16,25 @@ const { pipeline } = require('node:stream/promises');
 const { Readable } = require('node:stream');
 const feed = require('../linux-runtime/feed');
 const { extractOfficialResources } = require('../patcher/cli');
-const { CACHE_DIR, REPO_ROOT, log, parseArgs, rmrf } = require('./lib/common');
+const { CACHE_DIR, REPO_ROOT, constants, log, parseArgs, rmrf } = require('./lib/common');
 
-async function resolveRelease({ latest }) {
+// Feed directory of each update channel, as the official app chooses it from
+// its own version (resolveUpdateFeedConfig in the 1.4.1 main bundle,
+// misc-DYpkuuKJ.js): x.y.z -> v2/latest-mac.yml, -rc -> rc/rc-mac.yml,
+// -beta -> pre/beta-mac.yml, -alpha -> test/alpha-mac.yml.
+const CHANNEL_DIRS = { latest: 'v2', rc: 'rc', beta: 'pre', alpha: 'test' };
+
+async function resolveRelease({ latest, channel }) {
   const pinned = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'official.json'), 'utf8'));
-  if (!latest) return { ...pinned, url: feed.resolveFileUrl(pinned.feed, pinned.file) };
-  const feedUrl = `${pinned.feed}/${feed.macFeedFileName('latest')}`;
+  if (!latest && !channel) return { ...pinned, url: feed.resolveFileUrl(pinned.feed, pinned.file) };
+  const name = channel ?? 'latest';
+  if (!CHANNEL_DIRS[name]) throw new Error(`unknown channel "${name}" (known: ${Object.keys(CHANNEL_DIRS).join(', ')})`);
+  const base = `${constants.FEED_BASE}/${CHANNEL_DIRS[name]}`;
+  const feedUrl = `${base}/${feed.macFeedFileName(name)}`;
   const res = await fetch(feedUrl, { cache: 'no-store' });
   if (!res.ok) throw new Error(`GET ${feedUrl} failed with HTTP ${res.status}`);
   const info = feed.selectMacZip(feed.parseFeedYaml(await res.text()));
-  return { version: info.version, file: info.file, sha512: info.sha512, size: info.size, url: feed.resolveFileUrl(pinned.feed, info.file) };
+  return { version: info.version, file: info.file, sha512: info.sha512, size: info.size, url: feed.resolveFileUrl(base, info.file) };
 }
 
 async function download(url, dest) {
@@ -37,8 +47,8 @@ async function download(url, dest) {
 }
 
 /** Ensures the official release is downloaded, verified and extracted. Returns its description. */
-async function fetchOfficial({ latest = false, zip } = {}) {
-  const release = await resolveRelease({ latest });
+async function fetchOfficial({ latest = false, channel, zip } = {}) {
+  const release = await resolveRelease({ latest, channel });
   const dir = path.join(CACHE_DIR, 'official', release.version);
   const resourcesDir = path.join(dir, 'Resources');
   const marker = path.join(dir, 'extracted.json');
@@ -77,7 +87,11 @@ module.exports = { fetchOfficial, resolveRelease };
 
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2), { booleans: ['latest'] });
-  fetchOfficial({ latest: Boolean(args.latest), zip: typeof args.zip === 'string' ? args.zip : undefined })
+  fetchOfficial({
+    latest: Boolean(args.latest),
+    channel: typeof args.channel === 'string' ? args.channel : undefined,
+    zip: typeof args.zip === 'string' ? args.zip : undefined,
+  })
     .then((r) => process.stdout.write(`${r.resourcesDir}\n`))
     .catch((error) => {
       process.stderr.write(`fetch-official: ${error.message}\n`);

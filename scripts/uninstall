@@ -37,7 +37,7 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
 
 if [ "${1:-}" = --purge ]; then
-  rm -rf "$base" "$state/$COMMAND" "$cache/$COMMAND" "$config/Plaud" "$config/plaud-linux-flags.conf"
+  rm -rf "$base" "${state:?}/$COMMAND" "${cache:?}/$COMMAND" "$config/Plaud" "$config/plaud-linux-flags.conf"
   echo "Removed Plaud (unofficial) and its data"
 else
   rmdir "$base" 2>/dev/null || true

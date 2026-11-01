@@ -8,9 +8,11 @@ const { spawnSync } = require('node:child_process');
 const constants = require('../../linux-runtime/constants');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const CACHE_DIR = path.join(REPO_ROOT, '.cache');
-const BUILD_DIR = path.join(REPO_ROOT, 'build');
-const DIST_DIR = path.join(REPO_ROOT, 'dist');
+// The installed setup tool (scripts/setup.js) runs from a read-only system
+// directory and points these at a writable work directory.
+const CACHE_DIR = path.resolve(process.env.PLAUD_LINUX_CACHE_DIR || path.join(REPO_ROOT, '.cache'));
+const BUILD_DIR = path.resolve(process.env.PLAUD_LINUX_BUILD_DIR || path.join(REPO_ROOT, 'build'));
+const DIST_DIR = path.resolve(process.env.PLAUD_LINUX_DIST_DIR || path.join(REPO_ROOT, 'dist'));
 
 /** Node arch names used by Electron and the packaging targets. */
 const ARCHES = {

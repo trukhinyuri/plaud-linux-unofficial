@@ -47,6 +47,8 @@ fi
 # (linux-runtime/secure-fs.js); keep it private, also when an older install
 # created it with a permissive umask.
 mkdir -p "$data"
+# -m applies to $base only, which is the intent; $data keeps its mode.
+# shellcheck disable=SC2174
 mkdir -p -m 700 "$base"
 chmod 700 "$base"
 
