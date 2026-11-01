@@ -1,0 +1,190 @@
+# Builds the installer packages (deb, rpm, pacman) for x86_64 and aarch64
+# and tests them by installing them in fresh containers of the supported
+# distributions. Called by ci.yml and release.yml.
+#
+# The packages contain only this project's code; they are uploaded as
+# workflow artifacts. Installing them downloads the official Plaud release
+# inside the test container, where it stays: nothing built from it is
+# uploaded or cached.
+
+name: Installer packages
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.format }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        format: [deb, rpm, pacman]
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          # The addons are compiled on the oldest distribution each package
+          # targets.
+          - format: deb
+            image: docker.io/library/ubuntu:22.04
+          - format: rpm
+            image: docker.io/rockylinux/rockylinux:9
+          - format: pacman
+            arch: x64
+            image: docker.io/library/archlinux:latest
+          - format: pacman
+            arch: arm64
+            image: alarm:latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create the Arch Linux ARM image
+        if: matrix.image == 'alarm:latest'
+        run: scripts/ci/alarm-image.sh docker
+
+      - name: Build the package
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/src" -e SRC=/src "${{ matrix.image }}" /src/scripts/ci/installer-build.sh "${{ matrix.format }}"
+
+      - name: Check the package contents
+        run: |
+          set -eux
+          ls -l dist-installer
+          case "${{ matrix.format }}" in
+            rpm) sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends rpm ;;
+          esac
+          node scripts/package-installer.js --verify dist-installer/*
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-${{ matrix.format }}-${{ matrix.arch }}
+          path: dist-installer/*
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    name: install on ${{ matrix.distro }} (${{ matrix.arch }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        distro: [ubuntu-22.04, ubuntu-24.04, debian-12, rocky-9, alma-9, fedora, arch]
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - distro: ubuntu-22.04
+            format: deb
+            image: docker.io/library/ubuntu:22.04
+          - distro: ubuntu-24.04
+            format: deb
+            image: docker.io/library/ubuntu:24.04
+            # Also builds a per-user copy as an unprivileged user.
+            extra: --user
+          - distro: debian-12
+            format: deb
+            image: docker.io/library/debian:12
+          - distro: rocky-9
+            format: rpm
+            image: docker.io/rockylinux/rockylinux:9
+          - distro: alma-9
+            format: rpm
+            image: docker.io/library/almalinux:9
+          - distro: fedora
+            format: rpm
+            image: docker.io/library/fedora:latest
+            extra: --user
+          - distro: arch
+            arch: x64
+            format: pacman
+            image: docker.io/library/archlinux:latest
+            extra: --user
+          - distro: arch
+            arch: arm64
+            format: pacman
+            image: alarm:latest
+            extra: --user
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-${{ matrix.format }}-${{ matrix.arch }}
+          path: dist-installer
+
+      - name: Create the Arch Linux ARM image
+        if: matrix.image == 'alarm:latest'
+        run: scripts/ci/alarm-image.sh docker
+
+      - name: Install, check and remove
+        run: |
+          set -eu
+          pkg=$(ls dist-installer/*)
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" "${{ matrix.image }}" /src/scripts/ci/installer-smoke.sh "/src/$pkg" ${{ matrix.extra }}
+
+  desktop:
+    name: start the installed app (${{ matrix.arch }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-deb-${{ matrix.arch }}
+          path: dist-installer
+
+      - name: Install the deb (builds /opt/plaud-linux)
+        run: |
+          set -eux
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            pipewire pipewire-bin pipewire-pulse pulseaudio-utils wireplumber dbus dbus-bin \
+            xvfb xauth openbox x11-apps x11-utils
+          sudo apt-get install -y -q "./$(ls dist-installer/*.deb)"
+          plaud-linux-setup --status
+          test -u /opt/plaud-linux/chrome-sandbox
+
+      - name: Start the app through /usr/bin/plaud-linux
+        run: |
+          set -eux
+          mkdir -p ~/.config
+          echo --disable-gpu > ~/.config/plaud-linux-flags.conf
+          xvfb-run -a -s '-screen 0 1920x1080x24' scripts/ci/session.sh node scripts/smoke-test.js --launcher /usr/bin/plaud-linux --timeout 120
+
+      - name: Remove the package
+        run: |
+          set -eux
+          sudo apt-get purge -y -q plaud-linux-unofficial-installer
+          test ! -e /opt/plaud-linux
+          test ! -e /usr/bin/plaud-linux

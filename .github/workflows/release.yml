@@ -1,0 +1,106 @@
+# Publishes a release for a version tag (v<package.json version>): builds
+# and tests the installer packages, then attaches them to a GitHub release
+# with SHA256SUMS and signed build provenance.
+#
+# Only this project's own files are published: every package is checked
+# against the allowlist in scripts/package-installer.js before upload. The
+# packages download and verify the official Plaud release on the user's
+# machine; no Plaud code is ever attached.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check the tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag matches package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match package.json version $version" >&2
+            exit 1
+          fi
+
+  installer:
+    needs: check
+    uses: ./.github/workflows/installer.yml
+
+  publish:
+    name: publish
+    needs: installer
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: installer-*
+          path: release
+          merge-multiple: true
+
+      - name: Check contents and write SHA256SUMS
+        run: |
+          set -eux
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends rpm zstd
+          ls -l release
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 6
+          node scripts/package-installer.js --verify release/*
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          cat > notes.md <<EOF
+          Installer packages for Plaud Desktop for Linux (unofficial) ${TAG}.
+
+          The packages contain only this project's code. Installing one downloads the
+          official Plaud release from Plaud's servers and stock Electron from GitHub,
+          verifies both against the checksums pinned in this release
+          (Plaud $(node -p 'require("./official.json").version'), Electron $(node -p 'require("./linux-runtime/constants").ELECTRON_VERSION')),
+          and builds the app in /opt/plaud-linux. See the README for installation.
+
+          | Distribution | x86_64 | aarch64 |
+          |---|---|---|
+          | Ubuntu 22.04+, Debian 12+ | \`*_amd64.deb\` | \`*_arm64.deb\` |
+          | Fedora, RHEL/Rocky/Alma 9+ (EPEL for ffmpeg) | \`*.x86_64.rpm\` | \`*.aarch64.rpm\` |
+          | Arch Linux, Omarchy, Arch Linux ARM | \`*-x86_64.pkg.tar.zst\` | \`*-aarch64.pkg.tar.zst\` |
+
+          Verify a download: \`sha256sum -c SHA256SUMS --ignore-missing\` and
+          \`gh attestation verify <file> --repo ${GITHUB_REPOSITORY}\`.
+
+          Unofficial; not affiliated with or endorsed by PLAUD LLC. On macOS and Windows,
+          use the official app: https://www.plaud.ai/pages/plaud-desktop
+          EOF
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md release/*

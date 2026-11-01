@@ -1,15 +1,20 @@
 # Builds and tests Plaud Desktop for Linux (unofficial) against the official
 # Plaud release pinned in official.json, on x86_64 and aarch64.
 #
-# The builds contain official Plaud code downloaded during the job. Nothing
-# is uploaded: no artifacts, no releases, no caches of build outputs.
-# The daily run also checks whether the latest official release is supported
-# by the current patches, so upstream changes are noticed quickly.
+# The build and pacman jobs build the full app, which contains official
+# Plaud code downloaded during the job; nothing of it is uploaded: no
+# artifacts, no releases, no caches of build outputs. The installer job
+# (installer.yml) builds the installer packages, which contain only this
+# project's code, and uploads those as artifacts.
+# The daily run also checks whether the latest official release (and,
+# for information, the release candidate channel) is supported by the
+# current patches, so upstream changes are noticed quickly.
 
 name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
   schedule:
     - cron: '17 5 * * *'
@@ -23,6 +28,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: actionlint and shellcheck
+        run: |
+          set -eux
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends shellcheck
+          # rhysd/actionlint 1.7.12 (linux_amd64), pinned by SHA-256.
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+          shellcheck -s sh -S warning \
+            packaging/launcher.sh packaging/ffmpeg.sh packaging/appimage/AppRun packaging/deb/postinst packaging/deb/postrm \
+            packaging/installer/plaud-linux.in packaging/installer/plaud-linux-setup.in packaging/installer/deb/postinst \
+            packaging/installer/deb/prerm packaging/installer/deb/postrm packaging/installer/arch/install.in \
+            scripts/install scripts/uninstall scripts/ci/*.sh
+
+      - name: JavaScript syntax
+        run: |
+          set -eu
+          git ls-files '*.js' '*.mjs' | grep -v '^native/.*/deps/' | while read -r f; do node --check "$f"; done
+
+  installer:
+    uses: ./.github/workflows/installer.yml
+
   build:
     name: build (${{ matrix.arch }})
     strategy:
@@ -36,9 +74,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -56,7 +94,7 @@ jobs:
       # Only third-party downloads are cached (@electron/get keeps Electron in
       # ~/.cache/electron); the official Plaud archive is fetched every run.
       - name: Cache downloads (Electron, native dependency sources)
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/electron
@@ -135,6 +173,21 @@ jobs:
           resources=$(node scripts/fetch-official.js --latest)
           node patcher/cli.js check --resources "$resources"
 
+      # Informational: the release candidate channel shows the next major
+      # release before users get it (4.0.0-rc.2 restructured the bundle).
+      - name: Check the release candidate channel (scheduled runs, informational)
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.arch == 'x64'
+        continue-on-error: true
+        run: |
+          set -eu
+          resources=$(node scripts/fetch-official.js --channel rc)
+          if node patcher/cli.js check --resources "$resources"; then
+            echo "### Release candidate $(basename "$(dirname "$resources")"): patches apply" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Release candidate $(basename "$(dirname "$resources")"): patches need rework (docs/patches.md)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
   pacman:
     name: pacman package (x64)
     runs-on: ubuntu-24.04
@@ -148,11 +201,13 @@ jobs:
             libpipewire opus libogg dbus libpng zlib libx11 libxrandr pipewire wireplumber ffmpeg desktop-file-utils
           useradd -m builder
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build and package as an unprivileged user
         run: |
           chown -R builder: "$GITHUB_WORKSPACE"
+          # Expanded by the builder's shell, which inherits GITHUB_WORKSPACE.
+          # shellcheck disable=SC2016
           su builder -c 'cd "$GITHUB_WORKSPACE" && npm ci && npm run fetch-official && npm run build && npm run package -- --targets pacman'
 
       - name: Validate the package
